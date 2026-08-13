@@ -1,0 +1,20 @@
+# STM32CubeIDE / Eclipse 编译输出
+Debug/
+Release/
+
+# Qt / Android 构建产物
+QT_APP/build_apk/
+QT_APP/build_android/
+QT_APP/robot_ble_app.apk
+QT_APP/robot_ble_app.apk.idsig
+
+# Python
+__pycache__/
+*.pyc
+
+# 本地 AI 工作流状态
+.spec-workflow/
+
+# 系统文件
+Thumbs.db
+Desktop.ini
