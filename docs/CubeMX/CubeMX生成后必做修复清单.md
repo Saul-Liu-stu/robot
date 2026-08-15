@@ -56,9 +56,10 @@ void MPU_Config(void)
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /* 摄像头帧缓冲 0x24010000: 非缓存 */
+  /* 整个 D1 RAM 0x24000000: 非缓存 (含摄像头帧缓冲 0x24010000)
+   * ⚠ 基地址必须按区域大小对齐, 0x24010000 不是512KB对齐会静默失败! */
   MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-  MPU_InitStruct.BaseAddress = 0x24010000;
+  MPU_InitStruct.BaseAddress = 0x24000000;
   MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
@@ -82,7 +83,7 @@ grep -n "RISING\|PULLUP\|PRIORITY_HIGH\|HALFFULL" Core/Src/dcmi.c
 # 期望: 各对应行正确（具体行号见上文"验证"列）
 
 # 验证 MPU
-grep -c "24010000\|NOT_CACHEABLE\|NUMBER1" Core/Src/main.c
+grep -c "24000000\|NOT_CACHEABLE\|NUMBER1" Core/Src/main.c
 # 期望: 3（三个关键字都命中）
 ```
 
@@ -94,4 +95,4 @@ grep -c "24010000\|NOT_CACHEABLE\|NUMBER1" Core/Src/main.c
 |--------|------|
 | dcmi.h 缺 hdma_dcmi | **编译失败**：`hdma_dcmi undeclared` |
 | MPU 非缓存 | **画面黑线/卡死/渐变黑**，D-Cache 一致性问题 |
-| MPU 缺 0x24010000 | **黑屏**，摄像头 DMA 写到未配置的 MPU 区域 → BusFault → 反复复位 |
+| MPU 缺 0x24000000 区域 | **黑屏** 或 **蓝牙回复乱码**：D1 RAM 可缓存，DMA 读旧数据 |

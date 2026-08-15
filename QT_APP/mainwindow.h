@@ -6,10 +6,10 @@
 #include <QPushButton>
 #include <QListWidget>
 #include <QTextEdit>
-#include <QStackedWidget>
 #include "bluetoothclient.h"
 #include "servowidget.h"
 #include "pidwidget.h"
+#include "motorwidget.h"
 
 class MainWindow : public QMainWindow
 {
@@ -23,6 +23,8 @@ private slots:
     void onDeviceDiscovered(const QBluetoothDeviceInfo &device);
     void onServoResponse(const ServoResponse &rsp);
     void onPidMessage(const PidMessage &m);
+    void onMotorResponse(const MotorResponse &r);
+    void onMotorCmdRequested(int motorNum, int speed, int dir);
     void onServoAngleRequested(int srv, int angle);
     void onPidCommandRequested(const QString &cmd);
     void onScanClicked();
@@ -37,9 +39,9 @@ private:
     QLabel *m_statusIcon, *m_statusLabel;
     QPushButton *m_btnScan, *m_btnConnect, *m_btnDisconnect;
     QListWidget *m_devList;
-    QStackedWidget *m_stack;
     ServoWidget *m_servoWidget;
     PidWidget *m_pidWidget;
+    MotorWidget *m_motorWidget;
     QTextEdit *m_logView;
     int m_lineNum = 0;
 

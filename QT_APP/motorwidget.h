@@ -2,46 +2,38 @@
 #define MOTORWIDGET_H
 
 #include <QWidget>
+#include <QSlider>
 #include <QLabel>
-#include <QProgressBar>
+#include <QPushButton>
 #include "protocol_core.h"
 
-// ============================================================
-// 单电机数据显示面板
-// 用于展示一个电机 (A/B/C/D) 的编码器计数和转速
-// ============================================================
-
+// 电机控制面板 — 4 电机 A/B/C/D, 速度+方向
 class MotorWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MotorWidget(int motorIndex, QWidget *parent = nullptr);
+    explicit MotorWidget(QWidget *parent = nullptr);
 
-    // 更新显示数据
-    void updateData(const MotorInfo &info);
-
-    // 重置到默认状态
+    void onMotorResponse(const MotorResponse &r);
     void reset();
 
+signals:
+    void motorCmdRequested(int motorNum, int speed, int dir);
+
 private:
+    struct MotorRow {
+        QLabel *name;
+        QLabel *speedVal;
+        QSlider *slider;
+        QPushButton *btnDir;
+        QPushButton *btnSend;
+        QPushButton *btnStop;
+        int dir = 1;
+    };
+
+    MotorRow m_rows[4];
     void setupUi();
-
-    int m_index;
-    QLabel *m_titleLabel;
-    QLabel *m_encoderLabel;
-    QLabel *m_rpmLabel;
-    QProgressBar *m_rpmBar;
-
-    // 配色常量
-    static const QString C_BG;
-    static const QString C_CARD;
-    static const QString C_TXT;
-    static const QString C_DIM;
-    static const QString C_ACCENT;
-    static const QString C_GREEN;
-    static const QString C_YELLOW;
-    static const QString C_RED;
-    static const QString MOTOR_NAMES[4];
+    void updateRow(int i);
 };
 
-#endif // MOTORWIDGET_H
+#endif

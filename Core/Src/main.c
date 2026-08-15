@@ -34,19 +34,20 @@
 #include "encoder.h"
 #include "bluetooth_control.h"
 #include "imu.h"
-#include "gait.h"
-#include "ik2d.h"
+#include "leg_ik.h"
+#include "walk_gait.h"
 #include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+/* 控制模式: 上电默认校准模式(不动), 蓝牙命令切换 */
+typedef enum { MODE_CALIB = 0, MODE_STAND, MODE_TROT, MODE_STEP } ctrl_mode_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define CTRL_PERIOD_MS  5u    /* 控制节拍 5ms = 200Hz */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,17 +60,19 @@
 /* USER CODE BEGIN PV */
 uint8_t bt_rx_byte;           /* 蓝牙接收字节 */
 uint8_t imu_rx_byte;          /* IMU 接收字节 */
-volatile uint8_t g_cmd_stand_flag = 0;
-volatile uint8_t g_cmd_step_flag  = 0;
-volatile uint8_t g_cmd_trot_flag  = 0;
-static uint8_t  g_first_step = 1;        /* 站姿后第一次A不推进 */
+static ctrl_mode_t g_mode = MODE_CALIB;
+static float       g_cmd_deg[12];   /* 当前舵机指令角 (平滑用) */
+static uint32_t    g_ctrl_last = 0; /* 控制节拍计时 */
+static uint32_t    g_walk_t0   = 0; /* 行走起始时刻 (相位基准) */
+static float       g_step_t    = 0; /* 单步调试: 冻结的行走时刻 */
+static int         g_step_cnt  = 0; /* 单步计数 0~3 -> PH:0/90/180/270 */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-static void cmd_stand(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -145,7 +148,26 @@ int main(void)
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
   NewServo_StartAll();
 
+  Motor_Init();   /* 电机 PWM 启动, CCR=0 不转, STBY 拉高待命 */
+
+  /* 外展 4 舵机错开 100ms 上电锁定站姿角, 防乱动 */
+  for (int leg = 0; leg < 4; leg++) {
+      Leg_SetJoint((uint8_t)leg, JOINT_ABD, STAND_POSE[leg][JOINT_ABD]);
+      HAL_Delay(100);
+  }
+
+  /* 指令角初始化: 外展=锁定值, 大腿/小腿=IK站姿解 (首次G写入即站姿, 不跳变) */
+  for (int leg = 0; leg < 4; leg++) {
+      float d_leg = (leg == 0 || leg == 2) ? -LEG_HIP_D : LEG_HIP_D;
+      uint16_t deg[3];
+      LegIK_SolveServo((uint8_t)leg, 0.0f, d_leg, g_walk_params.stand_h, deg);
+      g_cmd_deg[leg]     = (float)STAND_POSE[leg][JOINT_ABD];
+      g_cmd_deg[leg + 4] = (float)deg[1];   /* 大腿 */
+      g_cmd_deg[leg + 8] = (float)deg[2];   /* 小腿 */
+  }
+
   HAL_UART_Receive_IT(&huart3, &bt_rx_byte, 1);
+  bluetooth_send("READY\r\n");   /* 上电自检: TX/DMA 通不通 */
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -156,41 +178,41 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    /* 延时命令: 主循环执行 HAL_Delay (不能放 ISR 里, SysTick 优先级低会死锁) */
-    if (g_cmd_stand_flag) {
-        g_cmd_stand_flag = 0;
-        bluetooth_send("STAND...\r\n");
-        cmd_stand();
-        Gait_DebugReset();     /* 单步插值起点重新同步站姿 */
-        bluetooth_send("OK:STAND\r\n");
-    }
-    if (g_cmd_trot_flag) {
-        g_cmd_trot_flag = 0;
-        if (g_first_step) {            /* 从站姿出发: 先插值到动作1, 再连续跑 */
-            g_first_step = 0;
-            Gait_SetType(GAIT_TROT);
-            Gait_DebugStep(0);         /* 500ms 平滑到 phase0 姿态 */
-            Gait_SetType(GAIT_TROT);   /* 解除暂停, 从 phase0 连续走 */
-        } else {
-            Gait_SetType(GAIT_TROT);   /* 从调试暂停恢复, 原地续跑 */
-        }
-        bluetooth_send("TROT\r\n");
-    }
-    if (g_cmd_step_flag) {
-        g_cmd_step_flag = 0;
-        Gait_SetType(GAIT_TROT);
-        if (g_first_step) {          /* 第一次 A: 站姿→动作1(phase 0), 不推进 */
-            g_first_step = 0;
-            Gait_DebugStep(0);
-        } else {
-            Gait_DebugStep(90);      /* 之后每次推进 90° */
-        }
-        { static char m[20]; snprintf(m, sizeof(m), "PH:%d\r\n", Gait_GetPhase(0)->phase);
-          bluetooth_send(m); }
-    }
+    /* ====== 5ms 控制节拍: IK解算 + 指数平滑 + 批量输出 ====== */
+    if ((uint32_t)(uwTick - g_ctrl_last) >= CTRL_PERIOD_MS) {
+        g_ctrl_last = uwTick;
 
-    /* 步态更新 */
-    Gait_Update();
+        if (g_mode == MODE_STAND || g_mode == MODE_TROT || g_mode == MODE_STEP) {
+            float rate = (g_mode == MODE_STAND) ? 0.12f : 0.20f;
+            uint16_t angles[12];
+
+            for (uint8_t leg = 0; leg < 4; leg++) {
+                float d_leg = (leg == 0 || leg == 2) ? -LEG_HIP_D : LEG_HIP_D;
+                uint16_t deg[3];
+
+                if (g_mode == MODE_STAND) {
+                    /* 站立: 足端 = 髋正下方 (0, ±d, 站高) */
+                    LegIK_SolveServo(leg, 0.0f, d_leg, g_walk_params.stand_h, deg);
+                } else {
+                    /* 行走/单步: 足端轨迹 -> IK */
+                    float t = (g_mode == MODE_TROT)
+                            ? (float)(uwTick - g_walk_t0) / 1000.0f
+                            : g_step_t;
+                    walk_vec3_t ft;
+                    WalkGait_FootTarget(leg, t, d_leg, &ft);
+                    LegIK_SolveServo(leg, ft.x, ft.y, ft.z, deg);
+                }
+
+                const uint8_t idx[3] = { leg, leg + 4, leg + 8 };  /* 舵机{i+1,i+5,i+9} */
+                for (int j = 0; j < 3; j++) {
+                    g_cmd_deg[idx[j]] += ((float)deg[j] - g_cmd_deg[idx[j]]) * rate;
+                    angles[idx[j]] = (uint16_t)(g_cmd_deg[idx[j]] + 0.5f);
+                }
+            }
+            NewServo_BatchControl(angles);
+        }
+        /* MODE_CALIB: 控制循环不碰舵机 */
+    }
 
   }
   /* USER CODE END 3 */
@@ -257,29 +279,29 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+static char     g_line_buf[12];
+static uint8_t  g_line_idx = 0;
+
+/* 解析指针处连续数字, 返回数值并推进指针 */
+static int s_parse_num(const char **p)
+{
+    int v = 0;
+    while (**p >= '0' && **p <= '9') { v = v * 10 + (int)(**p - '0'); (*p)++; }
+    return v;
+}
+
+#if 0   /* ==== 舵机校准已测完, 暂禁用 (后续需要再打开) ==== */
 static uint8_t  g_calib_servo   = 1;     /* 当前校准舵机号 1~12 */
 static uint16_t g_pending_angle = 0;
 static uint8_t  g_pending_srv   = 0;
 static uint8_t  g_pending       = 0;
-static char     g_line_buf[12];
-static uint8_t  g_line_idx = 0;
 
 static int s_atoi(const char *s) {
     int v = 0;
     while (*s >= '0' && *s <= '9') v = v * 10 + (int)(*s++ - '0');
     return v;
 }
-
-/* G 命令: 8 舵机错开 200ms, IK 算站姿角 (脚在髋正下方贴地) */
-static void cmd_stand(void) {
-    for (int leg = 0; leg < 4; leg++) {
-        uint16_t th, ca;
-        IK2D_Solve((uint8_t)leg, 0.0f, HIP_H_MM, &th, &ca);
-        Leg_SetJoint((uint8_t)leg, JOINT_THIGH, th);
-        Leg_SetJoint((uint8_t)leg, JOINT_CALF,  ca);
-        HAL_Delay(200);
-    }
-}
+#endif
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -296,16 +318,46 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             static char msg[32];
 
             if (f == 'G' || f == 'g') {
-                g_pending = 0;         /* 清校准残留 */
-                g_first_step = 1;      /* 回到站姿, 重置A单步序列 */
-                g_cmd_stand_flag = 1;
+                g_mode = MODE_STAND;         /* 5ms循环会平滑到站姿 */
+                bluetooth_send("STAND...\r\nOK:STAND\r\n");
             }
             else if (f == 'T' || f == 't') {
-                g_cmd_trot_flag = 1;
+                g_walk_t0 = uwTick;          /* 相位从零开始 */
+                g_mode = MODE_TROT;
+                bluetooth_send("TROT\r\n");
             }
             else if (f == 'A' || f == 'a') {
-                g_cmd_step_flag = 1;
+                if (g_mode != MODE_STEP) {   /* 首次按A: 进入单步模式, 相位0 */
+                    g_mode = MODE_STEP;
+                    g_step_t = 0.0f;
+                    g_step_cnt = 0;
+                } else {                     /* 之后每按: 相位 +1/4 周期 */
+                    g_step_t += g_walk_params.period * 0.25f;
+                    g_step_cnt = (g_step_cnt + 1) & 3;
+                }
+                snprintf(msg, sizeof(msg), "PH:%d\r\n", g_step_cnt * 90);
+                bluetooth_send(msg);
             }
+            else if (f == 'M' || f == 'm') {
+                /* 电机控制: M电机号:速度[:方向]
+                 * 电机号 0~3 = A~D, 速度 0~100, 方向 1=正转 0=反转(缺省1) */
+                const char *p = g_line_buf + 1;   /* 跳过 M */
+                int m  = s_parse_num(&p);
+                if (*p == ':') p++;
+                int sp = s_parse_num(&p);
+                int dir = 1;
+                if (*p == ':') { p++; dir = s_parse_num(&p); }
+                if (m >= 0 && m <= 3 && sp >= 0 && sp <= 100) {
+                    if (sp == 0)
+                        Motor_Stop((uint8_t)m);
+                    else
+                        Motor_Set((uint8_t)m, (uint8_t)sp, (uint8_t)(dir ? 1 : 0));
+                    snprintf(msg, sizeof(msg), "M%c:%d:%d\r\n",
+                             'A' + m, sp, dir ? 1 : 0);
+                    bluetooth_send(msg);
+                }
+            }
+#if 0   /* ==== 舵机校准已测完, 暂禁用 ==== */
             else if (f == 'Y' || f == 'y') {
                 if (g_pending && g_pending_srv >= 1 && g_pending_srv <= 12) {
                     NewServo_SetAngle(g_pending_srv, g_pending_angle);
@@ -343,6 +395,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                     }
                 }
             }
+#endif
+            else {
+                /* 调试: 回显无法识别的命令 */
+                snprintf(msg, sizeof(msg), "UNK:%s\r\n", g_line_buf);
+                bluetooth_send(msg);
+            }
             g_line_idx = 0;
         }
     } else if ((c >= '0' && c <= '9') || c == ':') {
@@ -379,7 +437,7 @@ void MPU_Config(void)
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
   MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-  MPU_InitStruct.BaseAddress = 0x24010000;
+  MPU_InitStruct.BaseAddress = 0x24000000;   /* 必须512KB对齐, 覆盖整个D1 RAM+摄像头缓冲 */
   MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 

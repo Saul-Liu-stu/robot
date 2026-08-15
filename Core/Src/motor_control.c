@@ -48,6 +48,10 @@ void Motor_Set(uint8_t motor, uint8_t speed, uint8_t dir)
     if (motor > MOTOR_D) return;
     if (speed > MOTOR_SPEED_MAX) speed = MOTOR_SPEED_MAX;
 
+    /* A/B 电机模块接线方向相反, 反转 dir */
+    if (motor == MOTOR_A || motor == MOTOR_B)
+        dir = !dir;
+
     const MotorPin_t *m = &motor_pins[motor];
 
     if (dir) {

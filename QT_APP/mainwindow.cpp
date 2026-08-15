@@ -49,7 +49,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
     connect(m_bt, &BluetoothClient::deviceDiscovered, this, &MainWindow::onDeviceDiscovered);
     connect(m_bt, &BluetoothClient::servoResponseReceived, this, &MainWindow::onServoResponse);
     connect(m_bt, &BluetoothClient::pidMessageReceived, this, &MainWindow::onPidMessage);
-    connect(m_bt, &BluetoothClient::rawLineReceived, this, [this](const QString &l) { appendLog(QStringLiteral("📡 ") + l, C_DIM); });
+    connect(m_bt, &BluetoothClient::motorResponseReceived, this, &MainWindow::onMotorResponse);
+    connect(m_bt, &BluetoothClient::rawLineReceived, this, [this](const QString &l) {
+        if (l.startsWith(QStringLiteral("READY")))
+            appendLog(QStringLiteral("🤝 READY — 固件就绪"), C_GREEN);
+        else if (l.startsWith(QStringLiteral("UNK:")))
+            appendLog(QStringLiteral("⚠ 固件不认识: %1").arg(l.mid(4)), C_ORANGE);
+        else if (l.startsWith(QStringLiteral("STAND...")))
+            appendLog(QStringLiteral("🧍 站立中..."), C_BLUE);
+        else
+            appendLog(QStringLiteral("📡 ") + l, C_DIM);
+    });
     connect(m_bt, &BluetoothClient::errorOccurred, this, [this](const QString &m) {
         appendLog(QStringLiteral("ERROR: ") + m, C_RED); });
     onBtStateChanged(BluetoothClient::Idle);
@@ -144,6 +154,21 @@ void MainWindow::onPidMessage(const PidMessage &m)
 }
 void MainWindow::onPidCommandRequested(const QString &c) { m_bt->sendPidCmd(c); appendLog(QStringLiteral("📤 %1").arg(c), C_BLUE); }
 
+// ── 电机 ─────────────────────────────────────────────────────
+void MainWindow::onMotorResponse(const MotorResponse &r)
+{
+    m_motorWidget->onMotorResponse(r);
+    appendLog(QStringLiteral("⚙ 电机%1: %2% %3")
+        .arg(QChar('A' + r.motorNum))
+        .arg(r.speed)
+        .arg(r.dir ? QStringLiteral("正转") : QStringLiteral("反转")), C_GREEN);
+}
+void MainWindow::onMotorCmdRequested(int motorNum, int speed, int dir)
+{
+    m_bt->sendMotorCmd(motorNum, speed, dir);
+    appendLog(QStringLiteral("📤 M%1:%2:%3").arg(motorNum).arg(speed).arg(dir), C_BLUE);
+}
+
 // ── 按钮 ────────────────────────────────────────────────────
 void MainWindow::onScanClicked()
 {
@@ -156,12 +181,12 @@ void MainWindow::onConnectClicked()
     if(m_bt->state()==BluetoothClient::Scanning) m_bt->stopScan();
     m_bt->connectToAddress(c->data(Qt::UserRole).toString());
 }
-void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->reset(); m_pidWidget->reset(); }
+void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->reset(); m_pidWidget->reset(); m_motorWidget->reset(); }
 
 // ── UI ──────────────────────────────────────────────────────
 void MainWindow::setupUi()
 {
-    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v3.0"));
+    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.0"));
     resize(430, 740);
     QPalette pal; pal.setColor(QPalette::Window, QColor(C_BG)); setPalette(pal); setAutoFillBackground(true);
     auto *cw=new QWidget; cw->setStyleSheet(QString("background:%1;").arg(C_BG));
@@ -189,33 +214,31 @@ void MainWindow::setupUi()
     connect(m_btnDisconnect,&QPushButton::clicked,this,&MainWindow::onDisconnectClicked);
     connect(m_devList,&QListWidget::itemDoubleClicked,this,[this](){onConnectClicked();});
 
-    // 内容区 (舵机 / PID 切换)
-    m_stack = new QStackedWidget;
+    // ── 舵机/PID (保留实例, 不显示; 连旧固件时信号处理不空指针) ──
     m_servoWidget = new ServoWidget;
     connect(m_servoWidget, &ServoWidget::servoAngleRequested, this, &MainWindow::onServoAngleRequested);
     connect(m_servoWidget, &ServoWidget::confirmYes, this, [this]() { m_bt->sendRawText(QStringLiteral("Y")); appendLog(QStringLiteral("📤 Y"), C_BLUE); });
     connect(m_servoWidget, &ServoWidget::confirmNo,  this, [this]() { m_bt->sendRawText(QStringLiteral("N")); appendLog(QStringLiteral("📤 N"), C_RED); });
     connect(m_servoWidget, &ServoWidget::switchServo,  this, [this](int srv) { m_bt->sendServoSwitch(srv); appendLog(QStringLiteral("📤 切换舵机 %1").arg(srv), C_BLUE); });
-    m_stack->addWidget(m_servoWidget);   // index 0
-
     m_pidWidget = new PidWidget;
     connect(m_pidWidget, &PidWidget::commandRequested, this, &MainWindow::onPidCommandRequested);
-    m_stack->addWidget(m_pidWidget);     // index 1
-    m_stack->setCurrentIndex(0);         // 默认显示舵机校准
 
-    rt->addWidget(m_stack, 3);
+    // ── 电机控制 ──
+    m_motorWidget = new MotorWidget;
+    connect(m_motorWidget, &MotorWidget::motorCmdRequested, this, &MainWindow::onMotorCmdRequested);
+    rt->addWidget(m_motorWidget, 3);
 
     // ── 步态控制 ──
     auto *gaitG = new QGroupBox; sGrp(gaitG, QStringLiteral("步态控制"));
     auto *gaitL = new QHBoxLayout(gaitG); gaitL->setSpacing(8);
-    auto mkG = [&](const QString &t, const QString &bg, const QString &cmd) {
+    auto mkGait = [&](const QString &t, const QString &bg, const QString &cmd) {
         auto *b = mkB(t, bg);
         connect(b, &QPushButton::clicked, this, [this, cmd]() { m_bt->sendRawText(cmd); appendLog(QStringLiteral("📤 %1").arg(cmd), C_BLUE); });
         gaitL->addWidget(b);
     };
-    mkG(QStringLiteral("G 站立"), C_GREEN, QStringLiteral("G"));
-    mkG(QStringLiteral("T Trot"), C_BLUE, QStringLiteral("T"));
-    mkG(QStringLiteral("A 步进90°"), C_ORANGE, QStringLiteral("A"));
+    mkGait(QStringLiteral("G 站姿"), C_GREEN, QStringLiteral("G"));
+    mkGait(QStringLiteral("A 单步"), C_ORANGE, QStringLiteral("A"));
+    mkGait(QStringLiteral("T 行走"), C_BLUE, QStringLiteral("T"));
     rt->addWidget(gaitG);
 
     // 日志

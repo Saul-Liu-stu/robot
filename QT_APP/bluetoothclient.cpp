@@ -325,6 +325,13 @@ void BluetoothClient::processBuffer()
         return;
     }
 
+    // 电机应答 "MA:50:1"
+    MotorResponse motorRsp = parseMotorLine(lineStr);
+    if (motorRsp.valid) {
+        emit motorResponseReceived(motorRsp);
+        return;
+    }
+
     // 阶段二: PID 调参
     PidMessage pidMsg = parsePidLine(lineStr);
     if (pidMsg.type != PidNone) { emit pidMessageReceived(pidMsg); return; }
@@ -383,6 +390,22 @@ void BluetoothClient::sendServoSwitch(int srv)
 {
     if (m_state != Connected || !m_outputStream) return;
     QByteArray data = buildServoSwitchCmd(srv);  // "5\r\n"
+    QJniEnvironment env;
+    jbyteArray jbuf = env->NewByteArray(data.size());
+    env->SetByteArrayRegion(jbuf, 0, data.size(), reinterpret_cast<const jbyte *>(data.constData()));
+    QJniObject os(static_cast<jobject>(m_outputStream));
+    os.callMethod<void>("write", "([B)V", jbuf);
+    os.callMethod<void>("flush", "()V");
+    env->DeleteLocalRef(jbuf);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+// ── 发送电机命令 ──────────────────────────────────────────────
+
+void BluetoothClient::sendMotorCmd(int motorNum, int speed, int dir)
+{
+    if (m_state != Connected || !m_outputStream) return;
+    QByteArray data = buildMotorCmd(motorNum, speed, dir);
     QJniEnvironment env;
     jbyteArray jbuf = env->NewByteArray(data.size());
     env->SetByteArrayRegion(jbuf, 0, data.size(), reinterpret_cast<const jbyte *>(data.constData()));

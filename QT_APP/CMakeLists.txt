@@ -13,6 +13,7 @@ qt_add_executable(RobotBleApp
     bluetoothclient.h    bluetoothclient.cpp
     servowidget.h        servowidget.cpp
     pidwidget.h          pidwidget.cpp
+    motorwidget.h        motorwidget.cpp
     mainwindow.h         mainwindow.cpp
 )
 

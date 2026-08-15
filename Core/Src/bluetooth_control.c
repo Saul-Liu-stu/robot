@@ -29,6 +29,13 @@ void bluetooth_send(const char *message)
 
     /* 等待上次DMA完成（115200下~30字节≈2.6ms，100ms间隔不会阻塞） */
     while (huart3.gState == HAL_UART_STATE_BUSY_TX);
+
+    /* STM32H7 D-Cache: 数据可能在缓存里没落到SRAM, DMA读旧数据。
+     * 发送前刷缓存, 非缓存内存上是无害的空操作。 */
+    SCB_CleanDCache_by_Addr(
+        (uint32_t *)((uint32_t)message & ~0x1Fu),   /* 对齐到缓存行头 */
+        ((len + 31u) & ~31u) + 32u);                /* 覆盖首尾两行 */
+
     HAL_UART_Transmit_DMA(&huart3, (uint8_t *)message, len);
 }
 

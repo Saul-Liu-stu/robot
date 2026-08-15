@@ -57,6 +57,34 @@ ServoResponse parseServoLine(const QString &line)
 }
 
 // ============================================================
+//  电机控制
+// ============================================================
+
+QByteArray buildMotorCmd(int motorNum, int speed, int dir)
+{
+    return QStringLiteral("M%1:%2:%3\r\n").arg(motorNum).arg(speed).arg(dir).toUtf8();
+}
+
+MotorResponse parseMotorLine(const QString &line)
+{
+    MotorResponse r;
+    QString t = line.trimmed();
+
+    // "MA:50:1" — M + A~D + :速度:方向
+    if (t.size() >= 6 && t[0] == u'M') {
+        char mc = t[1].toUpper().toLatin1();
+        if (mc >= 'A' && mc <= 'D' && t[2] == u':') {
+            r.motorNum = mc - 'A';
+            QStringList parts = t.mid(3).split(QLatin1Char(':'));
+            if (parts.size() >= 1) r.speed = parts[0].toInt();
+            if (parts.size() >= 2) r.dir = parts[1].toInt();
+            r.valid = true;
+        }
+    }
+    return r;
+}
+
+// ============================================================
 //  阶段二：PID 调参
 // ============================================================
 

@@ -2,149 +2,136 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFrame>
-#include <QtMath>
 
-// ── 配色 ────────────────────────────────────────────────────────
-const QString MotorWidget::C_BG      = QStringLiteral("#111318");
-const QString MotorWidget::C_CARD    = QStringLiteral("#181b22");
-const QString MotorWidget::C_TXT     = QStringLiteral("#d0d4dc");
-const QString MotorWidget::C_DIM     = QStringLiteral("#6b7280");
-const QString MotorWidget::C_ACCENT  = QStringLiteral("#5b8def");
-const QString MotorWidget::C_GREEN   = QStringLiteral("#22c55e");
-const QString MotorWidget::C_YELLOW  = QStringLiteral("#f59e0b");
-const QString MotorWidget::C_RED     = QStringLiteral("#ef4444");
-const QString MotorWidget::MOTOR_NAMES[4] = {
-    QStringLiteral("电机 A"),
-    QStringLiteral("电机 B"),
-    QStringLiteral("电机 C"),
-    QStringLiteral("电机 D")
+static const QString C_BG    = QStringLiteral("#111318");
+static const QString C_CARD  = QStringLiteral("#181b22");
+static const QString C_TXT   = QStringLiteral("#d0d4dc");
+static const QString C_DIM   = QStringLiteral("#6b7280");
+static const QString C_BLUE  = QStringLiteral("#5b8def");
+static const QString C_GREEN = QStringLiteral("#22c55e");
+static const QString C_RED   = QStringLiteral("#ef4444");
+static const QString C_ACC   = QStringLiteral("#1e2433");
+static const QString MOTOR_NAMES[4] = {
+    QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"), QStringLiteral("D")
 };
 
-MotorWidget::MotorWidget(int motorIndex, QWidget *parent)
-    : QWidget(parent), m_index(motorIndex)
+static QPushButton *mkB(const QString &t, const QString &bg, int fw = 0)
 {
-    setupUi();
+    auto *b = new QPushButton(t);
+    b->setMinimumHeight(30);
+    if (fw) b->setFixedWidth(fw);
+    b->setStyleSheet(QString(
+        "QPushButton{border:none;border-radius:6px;padding:4px 8px;"
+        "font-size:12px;font-weight:bold;color:#fff;background:%1;}"
+        "QPushButton:disabled{background:#2a2a30;color:#555;}").arg(bg));
+    return b;
 }
+
+MotorWidget::MotorWidget(QWidget *parent) : QWidget(parent) { setupUi(); }
 
 void MotorWidget::setupUi()
 {
-    setStyleSheet(QStringLiteral("background:transparent;"));
+    setStyleSheet(QString("background:%1;border-radius:10px;").arg(C_CARD));
+    auto *l = new QVBoxLayout(this);
+    l->setContentsMargins(12, 8, 12, 8); l->setSpacing(4);
 
-    auto *card = new QFrame;
-    card->setStyleSheet(QString(
-        "QFrame{background:%1;border:1px solid %2;border-radius:10px;}")
-        .arg(C_CARD, QStringLiteral("#232833")));
-    card->setMinimumHeight(145);
+    auto *title = new QLabel(QStringLiteral("电机控制"));
+    title->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
+    l->addWidget(title);
+    auto *sep = new QFrame; sep->setFrameShape(QFrame::HLine);
+    sep->setStyleSheet(QStringLiteral("color:#232833;")); sep->setFixedHeight(1);
+    l->addWidget(sep);
 
-    auto *mainLayout = new QVBoxLayout(card);
-    mainLayout->setContentsMargins(14, 10, 14, 10);
-    mainLayout->setSpacing(6);
+    for (int i = 0; i < 4; i++) {
+        auto &row = m_rows[i];
+        auto *rl = new QHBoxLayout; rl->setSpacing(6);
 
-    // ── 标题 ──
-    m_titleLabel = new QLabel(MOTOR_NAMES[m_index]);
-    m_titleLabel->setStyleSheet(QString(
-        "font-size:14px;font-weight:bold;color:%1;background:transparent;")
-        .arg(C_ACCENT));
-    mainLayout->addWidget(m_titleLabel);
+        row.name = new QLabel(QStringLiteral("电机 %1").arg(MOTOR_NAMES[i]));
+        row.name->setFixedWidth(52);
+        row.name->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
+        rl->addWidget(row.name);
 
-    // 分隔线
-    auto *sep = new QFrame;
-    sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet(QStringLiteral("color:#232833;background:transparent;"));
-    sep->setFixedHeight(1);
-    mainLayout->addWidget(sep);
+        row.speedVal = new QLabel(QStringLiteral("0%"));
+        row.speedVal->setFixedWidth(40);
+        row.speedVal->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_GREEN));
+        rl->addWidget(row.speedVal);
 
-    // ── 编码器计数 ──
-    auto *encRow = new QHBoxLayout;
-    auto *encLbl = new QLabel(QStringLiteral("编码器:"));
-    encLbl->setStyleSheet(QString("font-size:11px;color:%1;background:transparent;").arg(C_DIM));
-    encRow->addWidget(encLbl);
+        row.slider = new QSlider(Qt::Horizontal);
+        row.slider->setRange(0, 100);
+        row.slider->setValue(0);
+        row.slider->setStyleSheet(QString(
+            "QSlider::groove:horizontal{height:6px;background:%1;border-radius:3px;}"
+            "QSlider::handle:horizontal{width:24px;height:24px;margin:-9px 0;"
+            "background:%2;border-radius:12px;}"
+            "QSlider::sub-page:horizontal{background:%2;border-radius:3px;}")
+            .arg(C_ACC, C_BLUE));
+        rl->addWidget(row.slider, 1);
 
-    m_encoderLabel = new QLabel(QStringLiteral("--"));
-    m_encoderLabel->setStyleSheet(QString(
-        "font-size:20px;font-weight:bold;color:%1;background:transparent;")
-        .arg(C_TXT));
-    encRow->addWidget(m_encoderLabel, 1, Qt::AlignRight);
-    mainLayout->addLayout(encRow);
+        row.btnDir = mkB(QStringLiteral("正转"), C_GREEN, 48);
+        row.btnSend = mkB(QStringLiteral("发送"), C_BLUE, 48);
+        row.btnStop = mkB(QStringLiteral("停止"), C_RED, 48);
 
-    // ── 转速 ──
-    auto *rpmRow = new QHBoxLayout;
-    auto *rpmLbl = new QLabel(QStringLiteral("转速:"));
-    rpmLbl->setStyleSheet(QString("font-size:11px;color:%1;background:transparent;").arg(C_DIM));
-    rpmRow->addWidget(rpmLbl);
+        int idx = i;
+        // 滑块只改显示, 不发送
+        connect(row.slider, &QSlider::valueChanged, this, [this, idx](int v) {
+            m_rows[idx].speedVal->setText(QStringLiteral("%1%").arg(v));
+        });
+        // 方向只切本地状态, 不发送
+        connect(row.btnDir, &QPushButton::clicked, this, [this, idx]() {
+            auto &r = m_rows[idx];
+            r.dir = !r.dir;
+            r.btnDir->setText(r.dir ? QStringLiteral("正转") : QStringLiteral("反转"));
+            r.btnDir->setStyleSheet(QString(
+                "QPushButton{border:none;border-radius:6px;padding:4px 8px;"
+                "font-size:12px;font-weight:bold;color:#fff;background:%1;}")
+                .arg(r.dir ? C_GREEN : QStringLiteral("#f59e0b")));
+        });
+        // 发送: 确认速度+方向
+        connect(row.btnSend, &QPushButton::clicked, this, [this, idx]() {
+            emit motorCmdRequested(idx, m_rows[idx].slider->value(), m_rows[idx].dir);
+        });
+        // 停止: 归零 + 发送
+        connect(row.btnStop, &QPushButton::clicked, this, [this, idx]() {
+            m_rows[idx].slider->setValue(0);
+            emit motorCmdRequested(idx, 0, m_rows[idx].dir);
+        });
 
-    m_rpmLabel = new QLabel(QStringLiteral("-- RPM"));
-    m_rpmLabel->setStyleSheet(QString(
-        "font-size:20px;font-weight:bold;color:%1;background:transparent;")
-        .arg(C_GREEN));
-    rpmRow->addWidget(m_rpmLabel, 1, Qt::AlignRight);
-    mainLayout->addLayout(rpmRow);
-
-    // ── RPM 进度条 ──
-    m_rpmBar = new QProgressBar;
-    m_rpmBar->setRange(0, 500);  // 最大 500 RPM (可自适应调整)
-    m_rpmBar->setValue(0);
-    m_rpmBar->setTextVisible(false);
-    m_rpmBar->setFixedHeight(6);
-    m_rpmBar->setStyleSheet(QString(
-        "QProgressBar{background:%1;border:none;border-radius:3px;}"
-        "QProgressBar::chunk{background:%2;border-radius:3px;}")
-        .arg(QStringLiteral("#111318"), C_ACCENT));
-    mainLayout->addWidget(m_rpmBar);
-
-    auto *outerLayout = new QVBoxLayout(this);
-    outerLayout->setContentsMargins(0, 0, 0, 0);
-    outerLayout->addWidget(card);
+        rl->addWidget(row.btnDir);
+        rl->addWidget(row.btnSend);
+        rl->addWidget(row.btnStop);
+        l->addLayout(rl);
+    }
 }
 
-void MotorWidget::updateData(const MotorInfo &info)
+void MotorWidget::updateRow(int i)
 {
-    // 编码器计数 (千分位格式化)
-    m_encoderLabel->setText(QString::number(info.encoderCount));
+    auto &r = m_rows[i];
+    r.speedVal->setText(QStringLiteral("%1%").arg(r.slider->value()));
+}
 
-    // 转速
-    int rpm = qAbs(info.rpm);
-    QString rpmText = QString::number(info.rpm) + QStringLiteral(" RPM");
-
-    // 根据转速着色: 绿色 (低) → 黄色 (中) → 红色 (高)
-    const QString &rpmColor = rpm > 300 ? C_RED
-                            : rpm > 150 ? C_YELLOW
-                            : C_GREEN;
-
-    m_rpmLabel->setText(rpmText);
-    m_rpmLabel->setStyleSheet(QString(
-        "font-size:20px;font-weight:bold;color:%1;background:transparent;")
-        .arg(rpmColor));
-
-    // 进度条: 自适应最大值
-    if (rpm > m_rpmBar->maximum()) {
-        m_rpmBar->setMaximum(rpm + 50);
-    }
-    m_rpmBar->setValue(rpm);
-
-    // 进度条颜色跟随变化
-    m_rpmBar->setStyleSheet(QString(
-        "QProgressBar{background:%1;border:none;border-radius:3px;}"
-        "QProgressBar::chunk{background:%2;border-radius:3px;}")
-        .arg(QStringLiteral("#111318"), rpmColor));
+void MotorWidget::onMotorResponse(const MotorResponse &m)
+{
+    if (!m.valid || m.motorNum < 0 || m.motorNum > 3) return;
+    auto &r = m_rows[m.motorNum];
+    r.slider->setValue(m.speed);
+    r.dir = m.dir;
+    r.btnDir->setText(m.dir ? QStringLiteral("正转") : QStringLiteral("反转"));
+    r.btnDir->setStyleSheet(QString(
+        "QPushButton{border:none;border-radius:6px;padding:4px 8px;"
+        "font-size:12px;font-weight:bold;color:#fff;background:%1;}")
+        .arg(m.dir ? C_GREEN : QStringLiteral("#f59e0b")));
+    updateRow(m.motorNum);
 }
 
 void MotorWidget::reset()
 {
-    m_encoderLabel->setText(QStringLiteral("--"));
-    m_encoderLabel->setStyleSheet(QString(
-        "font-size:20px;font-weight:bold;color:%1;background:transparent;")
-        .arg(C_TXT));
-
-    m_rpmLabel->setText(QStringLiteral("-- RPM"));
-    m_rpmLabel->setStyleSheet(QString(
-        "font-size:20px;font-weight:bold;color:%1;background:transparent;")
-        .arg(C_GREEN));
-
-    m_rpmBar->setValue(0);
-    m_rpmBar->setMaximum(500);
-    m_rpmBar->setStyleSheet(QString(
-        "QProgressBar{background:%1;border:none;border-radius:3px;}"
-        "QProgressBar::chunk{background:%2;border-radius:3px;}")
-        .arg(QStringLiteral("#111318"), C_ACCENT));
+    for (int i = 0; i < 4; i++) {
+        m_rows[i].slider->setValue(0);
+        m_rows[i].dir = 1;
+        m_rows[i].btnDir->setText(QStringLiteral("正转"));
+        m_rows[i].btnDir->setStyleSheet(QString(
+            "QPushButton{border:none;border-radius:6px;padding:4px 8px;"
+            "font-size:12px;font-weight:bold;color:#fff;background:%1;}").arg(C_GREEN));
+        updateRow(i);
+    }
 }

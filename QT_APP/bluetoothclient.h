@@ -64,6 +64,7 @@ public slots:
     void sendServoSwitch(int srv);
     void sendPidCmd(const QString &cmd);
     void sendRawText(const QString &text);  // 发纯文本 + \r\n, 用于 Y/N 等
+    void sendMotorCmd(int motorNum, int speed, int dir);
 
 signals:
     void stateChanged(State state);
@@ -72,6 +73,7 @@ signals:
     void telemetryReceived(const TelemetryData &data);
     void servoResponseReceived(const ServoResponse &rsp);
     void pidMessageReceived(const PidMessage &m);
+    void motorResponseReceived(const MotorResponse &r);
     void errorOccurred(const QString &message);
     void rawLineReceived(const QString &line);
 

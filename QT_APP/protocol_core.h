@@ -21,6 +21,20 @@ QByteArray buildServoCmd(int servoNum, int angle);
 QByteArray buildServoSwitchCmd(int servoNum);
 ServoResponse parseServoLine(const QString &line);
 
+// ── 电机控制 ──────────────────────────────────────────────
+
+struct MotorResponse {
+    bool valid = false;
+    int motorNum = -1;   // 0~3 = A/B/C/D
+    int speed = 0;       // 0~100
+    int dir = 1;         // 1=正转 0=反转
+};
+
+// "M0:50:1" → 电机A 50% 正转
+QByteArray buildMotorCmd(int motorNum, int speed, int dir);
+// 解析 "MA:50:1"
+MotorResponse parseMotorLine(const QString &line);
+
 // ── 阶段二：PID 调参 ──────────────────────────────────────────
 
 struct PidParams {
