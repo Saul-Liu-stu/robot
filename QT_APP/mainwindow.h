@@ -42,6 +42,8 @@ private:
     ServoWidget *m_servoWidget;
     PidWidget *m_pidWidget;
     MotorWidget *m_motorWidget;
+    QLabel *m_shiftLabel;   // 前倾修正当前值
+    int m_footShift = 15;   // 固件最终默认 15mm
     QTextEdit *m_logView;
     int m_lineNum = 0;
 

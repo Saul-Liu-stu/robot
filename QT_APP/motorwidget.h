@@ -19,6 +19,8 @@ public:
 
 signals:
     void motorCmdRequested(int motorNum, int speed, int dir);
+    void rollAllRequested();   // R: 四电机 30% 正转
+    void stopAllRequested();   // S: 四电机全停
 
 private:
     struct MotorRow {

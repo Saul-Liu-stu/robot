@@ -13,7 +13,8 @@ walk_params_t g_walk_params = {
     .step_h   = 25.0f,    /* 抬腿 25mm */
     .period   = 1.2f,     /* 周期 1.2s (~0.83Hz) */
     .duty     = 0.6f,     /* 支撑相 60% */
-    .stand_h  = 240.0f,   /* 站高 240mm (实测狗形站姿) */
+    .stand_h  = STAND_H_LOW,   /* 低站姿 240mm (实测狗形深蹲) */
+    .foot_x_shift = 15.0f,  /* 前倾修正 (最终实测值), 蓝牙 X: 命令仍可在线调 */
 };
 
 void WalkGait_Init(void)
@@ -41,5 +42,6 @@ void WalkGait_FootTarget(uint8_t leg, float t, float d_signed, walk_vec3_t *out)
         out->x = -S * 0.5f + S * u;
         out->z = g_walk_params.stand_h - H * sinf(3.14159265f * u);
     }
+    out->x += g_walk_params.foot_x_shift;   /* 整体前移修正 (站立/行走统一) */
     out->y = d_signed;   /* 足端保持在腿平面内 */
 }

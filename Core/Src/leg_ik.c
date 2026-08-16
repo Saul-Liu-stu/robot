@@ -22,10 +22,10 @@ static const float s_hip_y[4] = { -BODY_BW/2,  BODY_BW/2, -BODY_BW/2,  BODY_BW/2
  */
 joint_calib_t g_leg_calib[4][3] = {
     /*         { q1侧摆,     q2前摆,     q3膝 } (zero, dir) */
-    /* FL */ { { 95.0f,  1.0f}, {212.0f, -1.0f}, { 93.0f,  1.0f} },
-    /* FR */ { { 94.0f, -1.0f}, { 65.0f,  1.0f}, {135.0f, -1.0f} },
+    /* FL */ { { 95.0f,  1.0f}, {115.0f, -1.0f}, { 93.0f,  1.0f} },
+    /* FR */ { { 94.0f, -1.0f}, {150.0f,  1.0f}, {135.0f, -1.0f} },
     /* RL */ { { 50.0f, -1.0f}, {110.0f, -1.0f}, {165.0f,  1.0f} },
-    /* RR */ { {150.0f,  1.0f}, {230.0f,  1.0f}, { 90.0f, -1.0f} },
+    /* RR */ { {150.0f,  1.0f}, {230.0f,  1.0f}, {185.0f, -1.0f} },
 };
 
 static float clampf(float v, float lo, float hi)

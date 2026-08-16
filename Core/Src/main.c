@@ -160,7 +160,7 @@ int main(void)
   for (int leg = 0; leg < 4; leg++) {
       float d_leg = (leg == 0 || leg == 2) ? -LEG_HIP_D : LEG_HIP_D;
       uint16_t deg[3];
-      LegIK_SolveServo((uint8_t)leg, 0.0f, d_leg, g_walk_params.stand_h, deg);
+      LegIK_SolveServo((uint8_t)leg, g_walk_params.foot_x_shift, d_leg, g_walk_params.stand_h, deg);
       g_cmd_deg[leg]     = (float)STAND_POSE[leg][JOINT_ABD];
       g_cmd_deg[leg + 4] = (float)deg[1];   /* 大腿 */
       g_cmd_deg[leg + 8] = (float)deg[2];   /* 小腿 */
@@ -191,8 +191,8 @@ int main(void)
                 uint16_t deg[3];
 
                 if (g_mode == MODE_STAND) {
-                    /* 站立: 足端 = 髋正下方 (0, ±d, 站高) */
-                    LegIK_SolveServo(leg, 0.0f, d_leg, g_walk_params.stand_h, deg);
+                    /* 站立: 足端 = 髋正下方 + 前移修正 (foot_x_shift, ±d, 站高) */
+                    LegIK_SolveServo(leg, g_walk_params.foot_x_shift, d_leg, g_walk_params.stand_h, deg);
                 } else {
                     /* 行走/单步: 足端轨迹 -> IK */
                     float t = (g_mode == MODE_TROT)
@@ -290,7 +290,7 @@ static int s_parse_num(const char **p)
     return v;
 }
 
-#if 0   /* ==== 舵机校准已测完, 暂禁用 (后续需要再打开) ==== */
+#if 1   /* ==== 舵机校准: 重装舵机臂后重新标定用 (标定完可改回 0) ==== */
 static uint8_t  g_calib_servo   = 1;     /* 当前校准舵机号 1~12 */
 static uint16_t g_pending_angle = 0;
 static uint8_t  g_pending_srv   = 0;
@@ -338,6 +338,43 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 snprintf(msg, sizeof(msg), "PH:%d\r\n", g_step_cnt * 90);
                 bluetooth_send(msg);
             }
+            else if (f == 'H' || f == 'h') {
+                /* 高站姿 280mm: 抬腿明显 */
+                g_walk_params.stand_h = STAND_H_HIGH;
+                g_mode = MODE_STAND;
+                bluetooth_send("HIGH\r\n");
+            }
+            else if (f == 'L' || f == 'l') {
+                /* 低站姿 240mm: 狗形深蹲 */
+                g_walk_params.stand_h = STAND_H_LOW;
+                g_mode = MODE_STAND;
+                bluetooth_send("LOW\r\n");
+            }
+            else if (f == 'X' || f == 'x') {
+                /* 前倾修正: X:毫米 (如 X:20) 正值=足端前移/身体后坐, 站立行走同时生效 */
+                const char *p = g_line_buf + 1;
+                int sign = 1;
+                if (*p == ':') p++;
+                if (*p == '-') { sign = -1; p++; }
+                int v = s_parse_num(&p);
+                if (v >= 0 && v <= 60) {
+                    g_walk_params.foot_x_shift = (float)(sign * v);
+                    snprintf(msg, sizeof(msg), "XSH:%d\r\n", sign * v);
+                    bluetooth_send(msg);
+                }
+            }
+            else if (f == 'R' || f == 'r') {
+                /* 一键滚动: 四电机 30% 占空比正转 (A/B方向已在Motor_Set内纠正) */
+                for (int i = 0; i < 4; i++)
+                    Motor_Set((uint8_t)i, 30, 1);
+                bluetooth_send("ROLL\r\n");
+            }
+            else if (f == 'S' || f == 's') {
+                /* 一键停: 四电机全停 */
+                for (int i = 0; i < 4; i++)
+                    Motor_Stop((uint8_t)i);
+                bluetooth_send("STOP\r\n");
+            }
             else if (f == 'M' || f == 'm') {
                 /* 电机控制: M电机号:速度[:方向]
                  * 电机号 0~3 = A~D, 速度 0~100, 方向 1=正转 0=反转(缺省1) */
@@ -357,7 +394,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                     bluetooth_send(msg);
                 }
             }
-#if 0   /* ==== 舵机校准已测完, 暂禁用 ==== */
+#if 1   /* ==== 舵机校准命令: 重装舵机臂后重新标定用 (标定完可改回 0) ==== */
             else if (f == 'Y' || f == 'y') {
                 if (g_pending && g_pending_srv >= 1 && g_pending_srv <= 12) {
                     NewServo_SetAngle(g_pending_srv, g_pending_angle);
@@ -403,7 +440,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             }
             g_line_idx = 0;
         }
-    } else if ((c >= '0' && c <= '9') || c == ':') {
+    } else if ((c >= '0' && c <= '9') || c == ':' || c == '-') {
         if (g_line_idx < sizeof(g_line_buf) - 1) g_line_buf[g_line_idx++] = c;
     } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
         if (g_line_idx == 0) g_line_buf[g_line_idx++] = c;

@@ -15,6 +15,10 @@
 
 #include <stdint.h>
 
+/* 站姿高度 (mm): 低=狗形深蹲(抬腿受限), 高=抬腿明显 */
+#define STAND_H_LOW    240.0f
+#define STAND_H_HIGH   280.0f
+
 typedef struct { float x, y, z; } walk_vec3_t;
 
 typedef struct {
@@ -23,6 +27,7 @@ typedef struct {
     float period;     /* 步态周期 T (s) */
     float duty;       /* 支撑相比例 beta ∈ (0,1) */
     float stand_h;    /* 站立足端 z (mm, 地面) */
+    float foot_x_shift; /* 足端前移修正 (mm): 正值=足端前移/身体后坐, 修正重心偏前导致的身体前倾 */
 } walk_params_t;
 
 /* 步态参数 (默认值见 walk_gait.c), 运行时可改 */

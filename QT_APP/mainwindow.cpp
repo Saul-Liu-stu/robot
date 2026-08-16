@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QSlider>
 #include <QGroupBox>
 #include <QFrame>
 #include <QScrollArea>
@@ -57,6 +59,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
             appendLog(QStringLiteral("⚠ 固件不认识: %1").arg(l.mid(4)), C_ORANGE);
         else if (l.startsWith(QStringLiteral("STAND...")))
             appendLog(QStringLiteral("🧍 站立中..."), C_BLUE);
+        else if (l.startsWith(QStringLiteral("XSH:"))) {
+            m_footShift = l.mid(4).trimmed().toInt();
+            m_shiftLabel->setText(QStringLiteral("当前: %1 mm").arg(m_footShift));
+            appendLog(QStringLiteral("⚖ 前移修正 %1mm").arg(m_footShift), C_GREEN);
+        }
+        else if (l.compare(QStringLiteral("HIGH"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("⬆ 高站姿 280mm"), C_BLUE);
+        else if (l.compare(QStringLiteral("LOW"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("⬇ 低站姿 240mm"), C_BLUE);
+        else if (l.compare(QStringLiteral("ROLL"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("🛞 滚动中 (30%)"), C_GREEN);
+        else if (l.compare(QStringLiteral("STOP"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("🛑 四电机已停"), C_RED);
         else
             appendLog(QStringLiteral("📡 ") + l, C_DIM);
     });
@@ -186,7 +201,7 @@ void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->rese
 // ── UI ──────────────────────────────────────────────────────
 void MainWindow::setupUi()
 {
-    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.0"));
+    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.4"));
     resize(430, 740);
     QPalette pal; pal.setColor(QPalette::Window, QColor(C_BG)); setPalette(pal); setAutoFillBackground(true);
     auto *cw=new QWidget; cw->setStyleSheet(QString("background:%1;").arg(C_BG));
@@ -214,32 +229,81 @@ void MainWindow::setupUi()
     connect(m_btnDisconnect,&QPushButton::clicked,this,&MainWindow::onDisconnectClicked);
     connect(m_devList,&QListWidget::itemDoubleClicked,this,[this](){onConnectClicked();});
 
-    // ── 舵机/PID (保留实例, 不显示; 连旧固件时信号处理不空指针) ──
+    // ── 舵机/PID (实例先建好, 信号连接; 舵机面板加在页面底部) ──
     m_servoWidget = new ServoWidget;
     connect(m_servoWidget, &ServoWidget::servoAngleRequested, this, &MainWindow::onServoAngleRequested);
     connect(m_servoWidget, &ServoWidget::confirmYes, this, [this]() { m_bt->sendRawText(QStringLiteral("Y")); appendLog(QStringLiteral("📤 Y"), C_BLUE); });
     connect(m_servoWidget, &ServoWidget::confirmNo,  this, [this]() { m_bt->sendRawText(QStringLiteral("N")); appendLog(QStringLiteral("📤 N"), C_RED); });
     connect(m_servoWidget, &ServoWidget::switchServo,  this, [this](int srv) { m_bt->sendServoSwitch(srv); appendLog(QStringLiteral("📤 切换舵机 %1").arg(srv), C_BLUE); });
+
     m_pidWidget = new PidWidget;
     connect(m_pidWidget, &PidWidget::commandRequested, this, &MainWindow::onPidCommandRequested);
 
     // ── 电机控制 ──
     m_motorWidget = new MotorWidget;
     connect(m_motorWidget, &MotorWidget::motorCmdRequested, this, &MainWindow::onMotorCmdRequested);
+    connect(m_motorWidget, &MotorWidget::rollAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("R")); appendLog(QStringLiteral("📤 R 滚动"), C_BLUE); });
+    connect(m_motorWidget, &MotorWidget::stopAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("S")); appendLog(QStringLiteral("📤 S 全停"), C_RED); });
     rt->addWidget(m_motorWidget, 3);
 
-    // ── 步态控制 ──
+    // ── 步态控制 (2行×3列, 避免一行挤变形) ──
     auto *gaitG = new QGroupBox; sGrp(gaitG, QStringLiteral("步态控制"));
-    auto *gaitL = new QHBoxLayout(gaitG); gaitL->setSpacing(8);
-    auto mkGait = [&](const QString &t, const QString &bg, const QString &cmd) {
+    auto *gaitGrid = new QGridLayout(gaitG); gaitGrid->setSpacing(6);
+    auto mkGait = [&](const QString &t, const QString &bg, const QString &cmd, int r, int c) {
         auto *b = mkB(t, bg);
+        b->setMinimumHeight(36);
         connect(b, &QPushButton::clicked, this, [this, cmd]() { m_bt->sendRawText(cmd); appendLog(QStringLiteral("📤 %1").arg(cmd), C_BLUE); });
-        gaitL->addWidget(b);
+        gaitGrid->addWidget(b, r, c);
     };
-    mkGait(QStringLiteral("G 站姿"), C_GREEN, QStringLiteral("G"));
-    mkGait(QStringLiteral("A 单步"), C_ORANGE, QStringLiteral("A"));
-    mkGait(QStringLiteral("T 行走"), C_BLUE, QStringLiteral("T"));
+    mkGait(QStringLiteral("G 站姿"),   C_GREEN, QStringLiteral("G"), 0, 0);
+    mkGait(QStringLiteral("H 高站姿"), QStringLiteral("#8b5cf6"), QStringLiteral("H"), 0, 1);
+    mkGait(QStringLiteral("L 低站姿"), QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 2);
+    mkGait(QStringLiteral("A 单步"),   C_ORANGE, QStringLiteral("A"), 1, 0);
+    mkGait(QStringLiteral("T 行走"),   C_BLUE, QStringLiteral("T"), 1, 1);
     rt->addWidget(gaitG);
+
+    // ── 前倾修正 X:value (滑杆 + 发送) ──
+    auto *shiftG = new QGroupBox; sGrp(shiftG, QStringLiteral("前倾修正 (足端前移)"));
+    auto *shiftL = new QVBoxLayout(shiftG); shiftL->setSpacing(4);
+
+    auto *shiftInfo = new QHBoxLayout;
+    m_shiftLabel = new QLabel(QStringLiteral("当前: %1 mm").arg(m_footShift));
+    m_shiftLabel->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
+    shiftInfo->addWidget(m_shiftLabel); shiftInfo->addStretch();
+    shiftL->addLayout(shiftInfo);
+
+    auto *shiftRow = new QHBoxLayout; shiftRow->setSpacing(6);
+    auto *shiftSlider = new QSlider(Qt::Horizontal);
+    shiftSlider->setRange(-30, 30);
+    shiftSlider->setValue(m_footShift);  // 15mm, 与固件默认一致
+    shiftSlider->setStyleSheet(QString(
+        "QSlider::groove:horizontal{height:6px;background:%1;border-radius:3px;}"
+        "QSlider::handle:horizontal{width:24px;height:24px;margin:-9px 0;"
+        "background:%2;border-radius:12px;}"
+        "QSlider::sub-page:horizontal{background:%2;border-radius:3px;}")
+        .arg(C_ACCENT, C_BLUE));
+    connect(shiftSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_footShift = v;
+        m_shiftLabel->setText(QStringLiteral("当前: %1 mm").arg(v));
+    });
+    shiftRow->addWidget(shiftSlider, 1);
+
+    auto *shiftSend = mkB(QStringLiteral("发送"), C_BLUE);
+    shiftSend->setFixedWidth(64);
+    connect(shiftSend, &QPushButton::clicked, this, [this]() {
+        m_bt->sendRawText(QStringLiteral("X:%1").arg(m_footShift));
+        appendLog(QStringLiteral("📤 X:%1").arg(m_footShift), C_BLUE);
+    });
+    shiftRow->addWidget(shiftSend);
+    shiftL->addLayout(shiftRow);
+    rt->addWidget(shiftG);
+
+    // ── 舵机校准 (v4.4 重新启用, 放页面底部) ──
+    auto *servoG = new QGroupBox; sGrp(servoG, QStringLiteral("舵机校准 (上电后、发 G/T 前使用)"));
+    auto *servoL = new QVBoxLayout(servoG);
+    servoL->setContentsMargins(2, 2, 2, 2);
+    servoL->addWidget(m_servoWidget);
+    rt->addWidget(servoG);
 
     // 日志
     auto *lgG=new QGroupBox; sGrp(lgG,QStringLiteral("运行日志"));

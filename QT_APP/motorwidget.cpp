@@ -101,6 +101,26 @@ void MotorWidget::setupUi()
         rl->addWidget(row.btnStop);
         l->addLayout(rl);
     }
+
+    // ── 一键操作 ──
+    auto *sep2 = new QFrame; sep2->setFrameShape(QFrame::HLine);
+    sep2->setStyleSheet(QStringLiteral("color:#232833;")); sep2->setFixedHeight(1);
+    l->addWidget(sep2);
+
+    auto *oneRow = new QHBoxLayout; oneRow->setSpacing(8);
+    auto *btnRoll = mkB(QStringLiteral("R 一键滚动 (四电机30%)"), C_GREEN);
+    auto *btnStopAll = mkB(QStringLiteral("S 一键停 (四电机)"), C_RED);
+    connect(btnRoll, &QPushButton::clicked, this, [this]() { emit rollAllRequested(); });
+    connect(btnStopAll, &QPushButton::clicked, this, [this]() {
+        for (int i = 0; i < 4; i++) {
+            m_rows[i].slider->setValue(0);
+            m_rows[i].speedVal->setText(QStringLiteral("0%"));
+        }
+        emit stopAllRequested();
+    });
+    oneRow->addWidget(btnRoll);
+    oneRow->addWidget(btnStopAll);
+    l->addLayout(oneRow);
 }
 
 void MotorWidget::updateRow(int i)
