@@ -4,9 +4,11 @@ import math
 
 L1, L2, D = 130.0, 180.0, 10.0
 import sys
-S, H, PERIOD, DUTY = 60.0, 25.0, 1.2, 0.6
+PERIOD, DUTY = 1.2, 0.6
 STAND_H = float(sys.argv[1]) if len(sys.argv) > 1 else 240.0
 X_SHIFT = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
+S = float(sys.argv[3]) if len(sys.argv) > 3 else 60.0
+H = float(sys.argv[4]) if len(sys.argv) > 4 else 25.0
 PHASE = [0.0, 0.5, 0.5, 0.0]          # FL FR RL RR trot 相位
 HIP_D = [-D, D, -D, D]
 

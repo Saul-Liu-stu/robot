@@ -67,9 +67,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
         else if (l.compare(QStringLiteral("HIGH"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("⬆ 高站姿 280mm"), C_BLUE);
         else if (l.compare(QStringLiteral("LOW"), Qt::CaseInsensitive) == 0)
-            appendLog(QStringLiteral("⬇ 低站姿 240mm"), C_BLUE);
+            appendLog(QStringLiteral("⬇ 低站姿 210mm (四轮驱动, 勿发T)"), C_BLUE);
         else if (l.compare(QStringLiteral("ROLL"), Qt::CaseInsensitive) == 0)
-            appendLog(QStringLiteral("🛞 滚动中 (30%)"), C_GREEN);
+            appendLog(QStringLiteral("🛞 前进中 (30%)"), C_GREEN);
+        else if (l.compare(QStringLiteral("BACK"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("↩ 后退中 (30%)"), C_ORANGE);
+        else if (l.compare(QStringLiteral("CLIMB"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("🧗 越障模式: 车轮30% + 对角抬腿40mm"), C_GREEN);
         else if (l.compare(QStringLiteral("STOP"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("🛑 四电机已停"), C_RED);
         else
@@ -201,7 +205,7 @@ void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->rese
 // ── UI ──────────────────────────────────────────────────────
 void MainWindow::setupUi()
 {
-    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.4"));
+    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.6"));
     resize(430, 740);
     QPalette pal; pal.setColor(QPalette::Window, QColor(C_BG)); setPalette(pal); setAutoFillBackground(true);
     auto *cw=new QWidget; cw->setStyleSheet(QString("background:%1;").arg(C_BG));
@@ -242,7 +246,8 @@ void MainWindow::setupUi()
     // ── 电机控制 ──
     m_motorWidget = new MotorWidget;
     connect(m_motorWidget, &MotorWidget::motorCmdRequested, this, &MainWindow::onMotorCmdRequested);
-    connect(m_motorWidget, &MotorWidget::rollAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("R")); appendLog(QStringLiteral("📤 R 滚动"), C_BLUE); });
+    connect(m_motorWidget, &MotorWidget::rollAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("R")); appendLog(QStringLiteral("📤 R 前进"), C_BLUE); });
+    connect(m_motorWidget, &MotorWidget::backAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("B")); appendLog(QStringLiteral("📤 B 后退"), C_BLUE); });
     connect(m_motorWidget, &MotorWidget::stopAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("S")); appendLog(QStringLiteral("📤 S 全停"), C_RED); });
     rt->addWidget(m_motorWidget, 3);
 
@@ -257,9 +262,10 @@ void MainWindow::setupUi()
     };
     mkGait(QStringLiteral("G 站姿"),   C_GREEN, QStringLiteral("G"), 0, 0);
     mkGait(QStringLiteral("H 高站姿"), QStringLiteral("#8b5cf6"), QStringLiteral("H"), 0, 1);
-    mkGait(QStringLiteral("L 低站姿"), QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 2);
+    mkGait(QStringLiteral("L 低趴"), QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 2);
     mkGait(QStringLiteral("A 单步"),   C_ORANGE, QStringLiteral("A"), 1, 0);
     mkGait(QStringLiteral("T 行走"),   C_BLUE, QStringLiteral("T"), 1, 1);
+    mkGait(QStringLiteral("W 越障"),   QStringLiteral("#14b8a6"), QStringLiteral("W"), 1, 2);
     rt->addWidget(gaitG);
 
     // ── 前倾修正 X:value (滑杆 + 发送) ──

@@ -108,9 +108,11 @@ void MotorWidget::setupUi()
     l->addWidget(sep2);
 
     auto *oneRow = new QHBoxLayout; oneRow->setSpacing(8);
-    auto *btnRoll = mkB(QStringLiteral("R 一键滚动 (四电机30%)"), C_GREEN);
-    auto *btnStopAll = mkB(QStringLiteral("S 一键停 (四电机)"), C_RED);
+    auto *btnRoll = mkB(QStringLiteral("R 前进"), C_GREEN);
+    auto *btnBack = mkB(QStringLiteral("B 后退"), QStringLiteral("#f59e0b"));
+    auto *btnStopAll = mkB(QStringLiteral("S 停"), C_RED);
     connect(btnRoll, &QPushButton::clicked, this, [this]() { emit rollAllRequested(); });
+    connect(btnBack, &QPushButton::clicked, this, [this]() { emit backAllRequested(); });
     connect(btnStopAll, &QPushButton::clicked, this, [this]() {
         for (int i = 0; i < 4; i++) {
             m_rows[i].slider->setValue(0);
@@ -119,6 +121,7 @@ void MotorWidget::setupUi()
         emit stopAllRequested();
     });
     oneRow->addWidget(btnRoll);
+    oneRow->addWidget(btnBack);
     oneRow->addWidget(btnStopAll);
     l->addLayout(oneRow);
 }

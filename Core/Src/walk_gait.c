@@ -13,7 +13,7 @@ walk_params_t g_walk_params = {
     .step_h   = 25.0f,    /* 抬腿 25mm */
     .period   = 1.2f,     /* 周期 1.2s (~0.83Hz) */
     .duty     = 0.6f,     /* 支撑相 60% */
-    .stand_h  = STAND_H_LOW,   /* 低站姿 240mm (实测狗形深蹲) */
+    .stand_h  = STAND_H_LOW,   /* 低站姿 210mm (四轮驱动模式, RL小腿余量9°) */
     .foot_x_shift = 15.0f,  /* 前倾修正 (最终实测值), 蓝牙 X: 命令仍可在线调 */
 };
 

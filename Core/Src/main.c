@@ -322,9 +322,25 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send("STAND...\r\nOK:STAND\r\n");
             }
             else if (f == 'T' || f == 't') {
+                /* 纯行走: 恢复行走参数 (W会改), 停电机, 相位从零开始 */
+                g_walk_params.step_len = 60.0f;
+                g_walk_params.step_h   = 25.0f;
+                for (int i = 0; i < 4; i++)
+                    Motor_Stop((uint8_t)i);
                 g_walk_t0 = uwTick;          /* 相位从零开始 */
                 g_mode = MODE_TROT;
                 bluetooth_send("TROT\r\n");
+            }
+            else if (f == 'W' || f == 'w') {
+                /* 越障模式: 四轮30%前进 + 高站姿对角交替抬腿 (原地抬不扫步) */
+                for (int i = 0; i < 4; i++)
+                    Motor_Set((uint8_t)i, 30, 1);
+                g_walk_params.stand_h = STAND_H_HIGH;  /* 高站姿: 抬腿明显 */
+                g_walk_params.step_h   = 70.0f;        /* 抬腿 70mm (RL小腿余量8.9°, 极限88mm) */
+                g_walk_params.step_len = 0.0f;         /* 足端不前后扫, 原地抬 */
+                g_walk_t0 = uwTick;
+                g_mode = MODE_TROT;
+                bluetooth_send("CLIMB\r\n");
             }
             else if (f == 'A' || f == 'a') {
                 if (g_mode != MODE_STEP) {   /* 首次按A: 进入单步模式, 相位0 */
@@ -368,6 +384,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 for (int i = 0; i < 4; i++)
                     Motor_Set((uint8_t)i, 30, 1);
                 bluetooth_send("ROLL\r\n");
+            }
+            else if (f == 'B' || f == 'b') {
+                /* 一键后退: 四电机 30% 占空比反转 */
+                for (int i = 0; i < 4; i++)
+                    Motor_Set((uint8_t)i, 30, 0);
+                bluetooth_send("BACK\r\n");
             }
             else if (f == 'S' || f == 's') {
                 /* 一键停: 四电机全停 */
