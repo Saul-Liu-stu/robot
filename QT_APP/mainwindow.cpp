@@ -65,9 +65,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
             appendLog(QStringLiteral("⚖ 前移修正 %1mm").arg(m_footShift), C_GREEN);
         }
         else if (l.compare(QStringLiteral("HIGH"), Qt::CaseInsensitive) == 0)
-            appendLog(QStringLiteral("⬆ 高站姿 280mm"), C_BLUE);
+            appendLog(QStringLiteral("⬆ 高站姿 280mm (狗姿态)"), C_BLUE);
+        else if (l.compare(QStringLiteral("KNEE"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("🦵 顶膝高站姿 280mm"), C_BLUE);
         else if (l.compare(QStringLiteral("LOW"), Qt::CaseInsensitive) == 0)
-            appendLog(QStringLiteral("⬇ 低站姿 210mm (四轮驱动, 勿发T)"), C_BLUE);
+            appendLog(QStringLiteral("⬇ 低趴 150mm (四轮驱动, 勿发T)"), C_BLUE);
+        else if (l.compare(QStringLiteral("FLIP"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("🔄 翻膝机动开始 (~3s)"), C_ORANGE);
         else if (l.compare(QStringLiteral("ROLL"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("🛞 前进中 (30%)"), C_GREEN);
         else if (l.compare(QStringLiteral("BACK"), Qt::CaseInsensitive) == 0)
@@ -205,7 +209,7 @@ void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->rese
 // ── UI ──────────────────────────────────────────────────────
 void MainWindow::setupUi()
 {
-    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.6"));
+    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.8"));
     resize(430, 740);
     QPalette pal; pal.setColor(QPalette::Window, QColor(C_BG)); setPalette(pal); setAutoFillBackground(true);
     auto *cw=new QWidget; cw->setStyleSheet(QString("background:%1;").arg(C_BG));
@@ -262,7 +266,8 @@ void MainWindow::setupUi()
     };
     mkGait(QStringLiteral("G 站姿"),   C_GREEN, QStringLiteral("G"), 0, 0);
     mkGait(QStringLiteral("H 高站姿"), QStringLiteral("#8b5cf6"), QStringLiteral("H"), 0, 1);
-    mkGait(QStringLiteral("L 低趴"), QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 2);
+    mkGait(QStringLiteral("K 顶膝"),   QStringLiteral("#06b6d4"), QStringLiteral("K"), 0, 2);
+    mkGait(QStringLiteral("L 低趴"),   QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 3);
     mkGait(QStringLiteral("A 单步"),   C_ORANGE, QStringLiteral("A"), 1, 0);
     mkGait(QStringLiteral("T 行走"),   C_BLUE, QStringLiteral("T"), 1, 1);
     mkGait(QStringLiteral("W 越障"),   QStringLiteral("#14b8a6"), QStringLiteral("W"), 1, 2);

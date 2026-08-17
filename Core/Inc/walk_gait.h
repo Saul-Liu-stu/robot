@@ -15,8 +15,8 @@
 
 #include <stdint.h>
 
-/* 站姿高度 (mm): 低=四轮驱动模式(超低趴, 不走路), 高=行走模式(抬腿明显) */
-#define STAND_H_LOW    210.0f
+/* 站姿高度 (mm): 低=四轮驱动模式(低趴220, 腿前后外伸, 不走路), 高=行走模式(抬腿明显) */
+#define STAND_H_LOW    220.0f
 #define STAND_H_HIGH   280.0f
 
 typedef struct { float x, y, z; } walk_vec3_t;

@@ -31,7 +31,7 @@
 /* 关节几何限位 (deg) */
 #define Q1_MIN_DEG   (-60.0f)   /* 髋侧摆 ±60° */
 #define Q1_MAX_DEG   ( 60.0f)
-#define Q2_MIN_DEG   (-90.0f)   /* 髋前摆 ±90° */
+#define Q2_MIN_DEG   (-110.0f)  /* 髋前摆: 后摆扩到-110° (低趴150mm需-102°) */
 #define Q2_MAX_DEG   ( 90.0f)
 #define Q3_MIN_DEG   (  0.0f)   /* 膝 0~140° */
 #define Q3_MAX_DEG   (140.0f)
@@ -62,5 +62,13 @@ ik_status_t LegIK_SolveServo(uint8_t leg, float x, float y, float z,
 void LegIK_FK(uint8_t leg, const leg_joint_deg_t *j,
               float *x, float *y, float *z);
 void LegIK_GetHipPos(uint8_t leg, float *hx, float *hy);
+
+/*
+ * 前腿膝分支切换 (仅影响 leg 0/1, 后腿不受影响):
+ *   rev=0 正常分支: 大腿后摆 + 膝前折 (狗姿态)
+ *   rev=1 反折分支: 大腿前摆 + 膝后折 (膝盖往前顶, 与后腿镜像对称)
+ * 两分支在直腿点 (足端距离=L1+L2) 连续, 翻膝机动利用这一点平滑切换。
+ */
+void LegIK_SetFrontReversed(uint8_t rev);
 
 #endif /* INC_LEG_IK_H_ */

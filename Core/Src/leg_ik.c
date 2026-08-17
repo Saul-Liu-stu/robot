@@ -33,6 +33,14 @@ static float clampf(float v, float lo, float hi)
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
+/* 前腿膝分支: 0=正常(狗姿态) 1=反折(膝盖往前顶), 由 main.c 姿态切换控制 */
+static uint8_t s_front_rev = 0;
+
+void LegIK_SetFrontReversed(uint8_t rev)
+{
+    s_front_rev = rev ? 1 : 0;
+}
+
 ik_status_t LegIK_Solve(uint8_t leg, float x, float y, float z, leg_joint_deg_t *out)
 {
     ik_status_t st = IK_OK;
@@ -64,13 +72,17 @@ ik_status_t LegIK_Solve(uint8_t leg, float x, float y, float z, leg_joint_deg_t 
 
     float cq3 = (xf * xf + zf * zf - L1 * L1 - L2 * L2) / (2.0f * L1 * L2);
     float q3 = acosf(clampf(cq3, -1.0f, 1.0f));
+    if (s_front_rev && leg < 2) q3 = -q3;   /* 前腿反折分支 */
+    /* q2 公式对两个分支都成立 (atan2 自动带出符号) */
     float q2 = atan2f(xf, zf) - atan2f(L2 * sinf(q3), L1 + L2 * cosf(q3));
 
     /* --- 转角度 + 限位钳制 --- */
     float q1d = q1 * RAD2DEG, q2d = q2 * RAD2DEG, q3d = q3 * RAD2DEG;
     out->q1 = clampf(q1d, Q1_MIN_DEG, Q1_MAX_DEG);
     out->q2 = clampf(q2d, Q2_MIN_DEG, Q2_MAX_DEG);
-    out->q3 = clampf(q3d, Q3_MIN_DEG, Q3_MAX_DEG);
+    out->q3 = (s_front_rev && leg < 2)
+            ? clampf(q3d, -Q3_MAX_DEG, Q3_MIN_DEG)   /* 反折: 膝 -140~0 */
+            : clampf(q3d,  Q3_MIN_DEG, Q3_MAX_DEG);
     if (st == IK_OK && (out->q1 != q1d || out->q2 != q2d || out->q3 != q3d))
         st = IK_OUT_OF_LIMIT;
     return st;

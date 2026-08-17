@@ -37,12 +37,63 @@
 #include "leg_ik.h"
 #include "walk_gait.h"
 #include <stdio.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 /* 控制模式: 上电默认校准模式(不动), 蓝牙命令切换 */
 typedef enum { MODE_CALIB = 0, MODE_STAND, MODE_TROT, MODE_STEP } ctrl_mode_t;
+
+#define CROUCH_X_F   30.0f    /* 正常分支低趴: 前腿足端前伸 (膝轴离地86mm) */
+#define CROUCH_X_FR 105.0f    /* 反折分支低趴: 前腿足端前伸 (200mm站高下髋力矩约8.8kg·cm) */
+#define CROUCH_X_R  175.0f    /* 正常分支低趴后伸 (RL小腿余量) */
+#define CROUCH_X_RR 135.0f    /* 反折分支低趴后伸 (支撑中心在身下, 前后对称) */
+
+#define FLIP_H         240.0f /* 翻膝机动高度: 此高度下前膝全程≥110mm */
+#define FLIP_SEG_MS    900u   /* 翻膝单段时长 (伸/收各900ms) */
+#define FLIP_SETTLE_MS 800u   /* 到位后等待平滑收敛再翻膝 */
+
+/* 前腿膝分支: 0=正常(狗姿态) 1=反折(膝盖往前顶) */
+static uint8_t  g_front_rev = 0;
+
+/* 翻膝机动状态 (姿态切换专用: 前腿足端伸到直腿点再收回, 中点翻转膝分支) */
+static uint8_t  g_flip_on    = 0;   /* 翻膝进行中 */
+static uint32_t g_flip_t0    = 0;   /* 翻膝起始时刻 */
+static uint32_t g_flip_start = 0;   /* 翻膝定时启动 (0=无计划) */
+static float    g_flip_x0    = 0;   /* 起点/终点x (当前站姿足端) */
+static float    g_flip_xm    = 0;   /* 直腿点x (两分支在此连续) */
+static uint8_t  g_flip_rev   = 0;   /* 翻膝后目标分支 */
+static uint8_t  g_flip_post  = 0;   /* 翻膝完成后: 1=趴LOW 2=升HIGH 3=开W */
+
+/* 站姿足端 x: 前移修正 + 低趴外伸 (站高越低, 前后腿越往外伸) */
+static float StandFootX(uint8_t leg)
+{
+    float k = (STAND_H_HIGH - g_walk_params.stand_h) / (STAND_H_HIGH - STAND_H_LOW);
+    if (k < 0.0f) k = 0.0f;
+    if (k > 1.0f) k = 1.0f;
+    if (leg < 2)
+        return g_walk_params.foot_x_shift + (g_front_rev ? CROUCH_X_FR * k : CROUCH_X_F * k);
+    return g_walk_params.foot_x_shift - (g_front_rev ? CROUCH_X_RR * k : CROUCH_X_R * k);
+}
+
+/* 直腿点x: 足端在高度h下伸到腿完全伸直的位置 (两分支在此连续) */
+static float FlipStraightX(float h)
+{
+    float dmax = (LEG_L1 + LEG_L2) * 0.9999f;
+    float d2 = dmax * dmax - h * h;
+    return (d2 > 0.0f) ? sqrtf(d2) : 0.0f;
+}
+
+/* 开始翻膝机动 */
+static void FlipBegin(void)
+{
+    g_flip_x0 = StandFootX(0);
+    g_flip_xm = FlipStraightX(g_walk_params.stand_h);
+    g_flip_t0 = uwTick;
+    g_flip_on = 1;
+    bluetooth_send("FLIP\r\n");
+}
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -157,10 +208,11 @@ int main(void)
   }
 
   /* 指令角初始化: 外展=锁定值, 大腿/小腿=IK站姿解 (首次G写入即站姿, 不跳变) */
+  LegIK_SetFrontReversed(0);   /* 上电默认狗姿态 (正常膝分支) */
   for (int leg = 0; leg < 4; leg++) {
       float d_leg = (leg == 0 || leg == 2) ? -LEG_HIP_D : LEG_HIP_D;
       uint16_t deg[3];
-      LegIK_SolveServo((uint8_t)leg, g_walk_params.foot_x_shift, d_leg, g_walk_params.stand_h, deg);
+      LegIK_SolveServo((uint8_t)leg, StandFootX((uint8_t)leg), d_leg, g_walk_params.stand_h, deg);
       g_cmd_deg[leg]     = (float)STAND_POSE[leg][JOINT_ABD];
       g_cmd_deg[leg + 4] = (float)deg[1];   /* 大腿 */
       g_cmd_deg[leg + 8] = (float)deg[2];   /* 小腿 */
@@ -182,6 +234,12 @@ int main(void)
     if ((uint32_t)(uwTick - g_ctrl_last) >= CTRL_PERIOD_MS) {
         g_ctrl_last = uwTick;
 
+        /* 翻膝定时启动 (命令设的延迟到点后开始) */
+        if (g_flip_start && (int32_t)(uwTick - g_flip_start) >= 0) {
+            g_flip_start = 0;
+            FlipBegin();
+        }
+
         if (g_mode == MODE_STAND || g_mode == MODE_TROT || g_mode == MODE_STEP) {
             float rate = (g_mode == MODE_STAND) ? 0.12f : 0.20f;
             uint16_t angles[12];
@@ -191,8 +249,39 @@ int main(void)
                 uint16_t deg[3];
 
                 if (g_mode == MODE_STAND) {
-                    /* 站立: 足端 = 髋正下方 + 前移修正 (foot_x_shift, ±d, 站高) */
-                    LegIK_SolveServo(leg, g_walk_params.foot_x_shift, d_leg, g_walk_params.stand_h, deg);
+                    float x_leg;
+                    if (g_flip_on && leg < 2) {
+                        /* 翻膝机动: 前腿足端伸到直腿点再收回, 中点翻转膝分支 */
+                        float seg = (float)FLIP_SEG_MS / 1000.0f;
+                        float t   = (float)(uwTick - g_flip_t0) / 1000.0f;
+                        if (t >= 2.0f * seg) {
+                            /* 完成: 应用新分支 + 后续动作 */
+                            g_flip_on = 0;
+                            g_front_rev = g_flip_rev;
+                            LegIK_SetFrontReversed(g_flip_rev);
+                            if (g_flip_post == 1)      g_walk_params.stand_h = STAND_H_LOW;
+                            else if (g_flip_post == 2) g_walk_params.stand_h = STAND_H_HIGH;
+                            else if (g_flip_post == 3) {
+                                for (int i = 0; i < 4; i++)
+                                    Motor_Set((uint8_t)i, 30, 1);
+                                g_walk_t0 = uwTick;
+                                g_mode = MODE_TROT;
+                            }
+                            x_leg = StandFootX(leg);
+                        } else if (t < seg) {
+                            float u = t / seg;          /* 第一段: 旧分支伸腿 */
+                            LegIK_SetFrontReversed(g_front_rev);
+                            x_leg = g_flip_x0 + (g_flip_xm - g_flip_x0) * u;
+                        } else {
+                            float u = (t - seg) / seg;  /* 第二段: 新分支收腿 */
+                            LegIK_SetFrontReversed(g_flip_rev);
+                            x_leg = g_flip_xm + (g_flip_x0 - g_flip_xm) * u;
+                        }
+                    } else {
+                        /* 站立: 足端 = 前移修正 + 低趴外伸 (StandFootX, ±d, 站高) */
+                        x_leg = StandFootX(leg);
+                    }
+                    LegIK_SolveServo(leg, x_leg, d_leg, g_walk_params.stand_h, deg);
                 } else {
                     /* 行走/单步: 足端轨迹 -> IK */
                     float t = (g_mode == MODE_TROT)
@@ -322,7 +411,8 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send("STAND...\r\nOK:STAND\r\n");
             }
             else if (f == 'T' || f == 't') {
-                /* 纯行走: 恢复行走参数 (W会改), 停电机, 相位从零开始 */
+                /* 纯行走: 恢复行走参数 (W会改), 停电机, 取消翻膝, 相位从零开始 */
+                g_flip_on = 0; g_flip_start = 0;
                 g_walk_params.step_len = 60.0f;
                 g_walk_params.step_h   = 25.0f;
                 for (int i = 0; i < 4; i++)
@@ -333,13 +423,21 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             }
             else if (f == 'W' || f == 'w') {
                 /* 越障模式: 四轮30%前进 + 高站姿对角交替抬腿 (原地抬不扫步) */
-                for (int i = 0; i < 4; i++)
-                    Motor_Set((uint8_t)i, 30, 1);
+                g_flip_on = 0; g_flip_start = 0;
                 g_walk_params.stand_h = STAND_H_HIGH;  /* 高站姿: 抬腿明显 */
                 g_walk_params.step_h   = 70.0f;        /* 抬腿 70mm (RL小腿余量8.9°, 极限88mm) */
                 g_walk_params.step_len = 0.0f;         /* 足端不前后扫, 原地抬 */
-                g_walk_t0 = uwTick;
-                g_mode = MODE_TROT;
+                if (g_front_rev) {
+                    /* 反折分支抬70mm会钳FL小腿: 先翻膝回正常再开走 */
+                    g_flip_rev  = 0;
+                    g_flip_post = 3;
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                } else {
+                    for (int i = 0; i < 4; i++)
+                        Motor_Set((uint8_t)i, 30, 1);
+                    g_walk_t0 = uwTick;
+                    g_mode = MODE_TROT;
+                }
                 bluetooth_send("CLIMB\r\n");
             }
             else if (f == 'A' || f == 'a') {
@@ -355,14 +453,43 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send(msg);
             }
             else if (f == 'H' || f == 'h') {
-                /* 高站姿 280mm: 抬腿明显 */
-                g_walk_params.stand_h = STAND_H_HIGH;
+                /* 狗姿态高站姿 280: 前腿正常分支 (若当前反折, 先翻膝再升) */
+                g_flip_on = 0; g_flip_start = 0;
+                if (g_front_rev) {
+                    if (g_walk_params.stand_h < FLIP_H)
+                        g_walk_params.stand_h = FLIP_H;   /* 先升到翻膝高度 */
+                    g_flip_rev  = 0;                      /* 目标: 正常分支 */
+                    g_flip_post = 2;                      /* 翻完升 280 */
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                } else {
+                    g_walk_params.stand_h = STAND_H_HIGH;
+                }
                 g_mode = MODE_STAND;
                 bluetooth_send("HIGH\r\n");
             }
+            else if (f == 'K' || f == 'k') {
+                /* 膝盖往前顶高站姿 280: 前腿反折分支 (若当前正常, 先翻膝) */
+                g_flip_on = 0; g_flip_start = 0;
+                g_walk_params.stand_h = STAND_H_HIGH;
+                if (!g_front_rev) {
+                    g_flip_rev  = 1;                      /* 目标: 反折分支 */
+                    g_flip_post = 0;                      /* 翻完保持 280 */
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                }
+                g_mode = MODE_STAND;
+                bluetooth_send("KNEE\r\n");
+            }
             else if (f == 'L' || f == 'l') {
-                /* 低站姿 240mm: 狗形深蹲 */
-                g_walk_params.stand_h = STAND_H_LOW;
+                /* 低趴 150: 反折分支趴下 (若当前正常, 先翻膝再趴) */
+                g_flip_on = 0; g_flip_start = 0;
+                if (!g_front_rev) {
+                    g_walk_params.stand_h = FLIP_H;       /* 先到翻膝高度 */
+                    g_flip_rev  = 1;                      /* 目标: 反折分支 */
+                    g_flip_post = 1;                      /* 翻完趴到 LOW */
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                } else {
+                    g_walk_params.stand_h = STAND_H_LOW;  /* 已是反折: 直接趴 */
+                }
                 g_mode = MODE_STAND;
                 bluetooth_send("LOW\r\n");
             }
