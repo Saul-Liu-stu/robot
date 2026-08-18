@@ -36,6 +36,7 @@
 #include "imu.h"
 #include "leg_ik.h"
 #include "walk_gait.h"
+#include "attitude_control.h"
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -54,27 +55,51 @@ typedef enum { MODE_CALIB = 0, MODE_STAND, MODE_TROT, MODE_STEP } ctrl_mode_t;
 #define FLIP_SEG_MS    900u   /* 翻膝单段时长 (伸/收各900ms) */
 #define FLIP_SETTLE_MS 800u   /* 到位后等待平滑收敛再翻膝 */
 
-/* 前腿膝分支: 0=正常(狗姿态) 1=反折(膝盖往前顶) */
+/* 前后腿膝分支: 0=正常(狗姿态) 1=反折(膝盖往前顶) */
 static uint8_t  g_front_rev = 0;
+static uint8_t  g_rear_rev  = 0;
 
-/* 翻膝机动状态 (姿态切换专用: 前腿足端伸到直腿点再收回, 中点翻转膝分支) */
+/* 控制模式与行走时刻 (PTD 函数也要用, 声明放这里) */
+static ctrl_mode_t g_mode    = MODE_CALIB;
+static uint32_t    g_walk_t0 = 0; /* 行走起始时刻 (相位基准) */
+
+/* 横移走状态: F 命令开启 (0=前后trot, 1=横向螃蟹步), g_lat_dir 为方向 */
+static uint8_t  g_gait_lat = 0;
+static int      g_lat_dir  = 1;
+
+/* 坡度层状态: R 置位轮式模式, S/B 清除 */
+static uint8_t  g_wheel_on    = 0;
+static float    g_slope_shift = 0;   /* 坡度层足端修正 (mm, 负=后移), 叠加进 StandFootX */
+static uint8_t  g_calib_pending = 0; /* Z 标定进行中 (完成时发 SLOPE:ON) */
+
+/* IMU 上报: I 命令开关, 10Hz 固定频率 */
+static uint8_t  g_imu_stream = 0;
+static uint32_t g_imu_last   = 0;
+static uint8_t  g_imu_diag   = 0;  /* I 按下后主循环发一次诊断 */
+
+/* 翻膝机动状态 (姿态切换专用: 指定腿组的足端伸到直腿点再收回, 中点翻转膝分支) */
 static uint8_t  g_flip_on    = 0;   /* 翻膝进行中 */
 static uint32_t g_flip_t0    = 0;   /* 翻膝起始时刻 */
 static uint32_t g_flip_start = 0;   /* 翻膝定时启动 (0=无计划) */
-static float    g_flip_x0    = 0;   /* 起点/终点x (当前站姿足端) */
-static float    g_flip_xm    = 0;   /* 直腿点x (两分支在此连续) */
-static uint8_t  g_flip_rev   = 0;   /* 翻膝后目标分支 */
-static uint8_t  g_flip_post  = 0;   /* 翻膝完成后: 1=趴LOW 2=升HIGH 3=开W */
+static uint8_t  g_flip_mask  = 0;   /* 翻膝腿组: bit0=前腿 bit1=后腿 */
+static float    g_flip_x0f   = 0;   /* 前腿起点/终点x */
+static float    g_flip_x0r   = 0;   /* 后腿起点/终点x */
+static float    g_flip_xm    = 0;   /* 直腿点x幅度 (两分支在此连续) */
+static uint8_t  g_flip_revf  = 0;   /* 翻膝后前腿分支 */
+static uint8_t  g_flip_revr  = 0;   /* 翻膝后后腿分支 */
+static uint8_t  g_flip_post  = 0;   /* 翻膝完成后: 1=趴LOW 2=升HIGH 3=开W 4=开F */
 
-/* 站姿足端 x: 前移修正 + 低趴外伸 (站高越低, 前后腿越往外伸) */
+/* 站姿足端 x: 前移修正 + 低趴外伸 + 坡度修正 (站高越低, 前后腿越往外伸) */
 static float StandFootX(uint8_t leg)
 {
     float k = (STAND_H_HIGH - g_walk_params.stand_h) / (STAND_H_HIGH - STAND_H_LOW);
     if (k < 0.0f) k = 0.0f;
     if (k > 1.0f) k = 1.0f;
     if (leg < 2)
-        return g_walk_params.foot_x_shift + (g_front_rev ? CROUCH_X_FR * k : CROUCH_X_F * k);
-    return g_walk_params.foot_x_shift - (g_front_rev ? CROUCH_X_RR * k : CROUCH_X_R * k);
+        return g_walk_params.foot_x_shift + g_slope_shift +
+               (g_front_rev ? CROUCH_X_FR * k : CROUCH_X_F * k);
+    return g_walk_params.foot_x_shift + g_slope_shift -
+           (g_rear_rev ? CROUCH_X_RR * k : CROUCH_X_R * k);
 }
 
 /* 直腿点x: 足端在高度h下伸到腿完全伸直的位置 (两分支在此连续) */
@@ -85,14 +110,30 @@ static float FlipStraightX(float h)
     return (d2 > 0.0f) ? sqrtf(d2) : 0.0f;
 }
 
-/* 开始翻膝机动 */
+/* 开始翻膝机动 (前腿往+伸, 后腿往-伸) */
 static void FlipBegin(void)
 {
-    g_flip_x0 = StandFootX(0);
-    g_flip_xm = FlipStraightX(g_walk_params.stand_h);
-    g_flip_t0 = uwTick;
-    g_flip_on = 1;
+    g_flip_x0f = StandFootX(0);
+    g_flip_x0r = StandFootX(2);
+    g_flip_xm  = FlipStraightX(g_walk_params.stand_h);
+    g_flip_t0  = uwTick;
+    g_flip_on  = 1;
     bluetooth_send("FLIP\r\n");
+}
+
+/* 启动 trot: 恢复行走参数 + 停电机 + 相位归零, 可选重心横移模式 */
+static void TrotStart(uint8_t shift_mode, const char *reply)
+{
+    g_flip_on = 0; g_flip_start = 0;
+    g_walk_params.step_len = 60.0f;
+    g_walk_params.step_h   = 25.0f;
+    for (int i = 0; i < 4; i++)
+        Motor_Stop((uint8_t)i);
+    g_shift_mode = shift_mode;
+    g_gait_lat = 0;              /* 前后 trot */
+    g_walk_t0 = uwTick;          /* 相位从零开始 */
+    g_mode = MODE_TROT;
+    bluetooth_send(reply);
 }
 /* USER CODE END PTD */
 
@@ -111,10 +152,8 @@ static void FlipBegin(void)
 /* USER CODE BEGIN PV */
 uint8_t bt_rx_byte;           /* 蓝牙接收字节 */
 uint8_t imu_rx_byte;          /* IMU 接收字节 */
-static ctrl_mode_t g_mode = MODE_CALIB;
 static float       g_cmd_deg[12];   /* 当前舵机指令角 (平滑用) */
 static uint32_t    g_ctrl_last = 0; /* 控制节拍计时 */
-static uint32_t    g_walk_t0   = 0; /* 行走起始时刻 (相位基准) */
 static float       g_step_t    = 0; /* 单步调试: 冻结的行走时刻 */
 static int         g_step_cnt  = 0; /* 单步计数 0~3 -> PH:0/90/180/270 */
 /* USER CODE END PV */
@@ -191,6 +230,7 @@ int main(void)
   MX_TIM5_Init();
   MX_USART3_UART_Init();
   MX_USART2_UART_Init();
+  MX_UART4_Init();
   /* USER CODE BEGIN 2 */
 
   /* ====== 舵机校准：先强制拉低引脚，再开 PWM ====== */
@@ -208,7 +248,8 @@ int main(void)
   }
 
   /* 指令角初始化: 外展=锁定值, 大腿/小腿=IK站姿解 (首次G写入即站姿, 不跳变) */
-  LegIK_SetFrontReversed(0);   /* 上电默认狗姿态 (正常膝分支) */
+  LegIK_SetFrontReversed(0);   /* 上电默认狗姿态 (前后腿正常膝分支) */
+  LegIK_SetRearReversed(0);
   for (int leg = 0; leg < 4; leg++) {
       float d_leg = (leg == 0 || leg == 2) ? -LEG_HIP_D : LEG_HIP_D;
       uint16_t deg[3];
@@ -218,8 +259,15 @@ int main(void)
       g_cmd_deg[leg + 8] = (float)deg[2];   /* 小腿 */
   }
 
+  HAL_UART_Receive_IT(&huart2, &imu_rx_byte, 1);   /* IMU 数据流 (PD6, 115200bps) */
   HAL_UART_Receive_IT(&huart3, &bt_rx_byte, 1);
   bluetooth_send("READY\r\n");   /* 上电自检: TX/DMA 通不通 */
+
+  /* 环回自测: PD5(TX) 发 5 字节, 短接 PD5-PD6 后 raw 应 >=5 */
+  {
+      static const uint8_t loop_test[] = {0x55, 0x51, 0x00, 0x00, 0xA6};
+      HAL_UART_Transmit(&huart2, (uint8_t *)loop_test, 5, 100);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -230,6 +278,61 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+    /* ====== IMU 姿态上报: I 命令开启后 10Hz, 帧尾 520 (参考 adc_10 风格) ====== */
+    if (g_imu_stream && (uint32_t)(uwTick - g_imu_last) >= 100u) {
+        g_imu_last = uwTick;
+        const IMU_Angle *a = IMU_GetAngle();
+        /* 定点×10 (0.1°分辨率), 全整数传输, 避免浮点打印 */
+        int16_t rx = (int16_t)(a->roll  * 10.0f + (a->roll  >= 0 ? 0.5f : -0.5f));
+        int16_t px = (int16_t)(a->pitch * 10.0f + (a->pitch >= 0 ? 0.5f : -0.5f));
+        int16_t yx = (int16_t)(a->yaw   * 10.0f + (a->yaw   >= 0 ? 0.5f : -0.5f));
+        static char ibuf[40];   /* static: DMA 发送期间缓冲区必须有效 */
+        snprintf(ibuf, sizeof(ibuf), "R,%d,P,%d,Y,%d,520\r\n", (int)rx, (int)px, (int)yx);
+        bluetooth_send(ibuf);
+    }
+
+    /* ====== USART2 接收链看门狗: 每1s检查, 断链自动重装 (双保险) ====== */
+    {
+        static uint32_t rx_wd_last = 0;
+        if ((uint32_t)(uwTick - rx_wd_last) >= 1000u) {
+            rx_wd_last = uwTick;
+            if (huart2.RxState != HAL_UART_STATE_BUSY_RX) {
+                huart2.RxState = HAL_UART_STATE_READY;
+                HAL_UART_Receive_IT(&huart2, &imu_rx_byte, 1);
+            }
+        }
+    }
+
+    /* ====== IMU 诊断: 按 I 后报告 USART2 寄存器与收发计数 (主循环发, 避开ISR DMA死锁) ====== */
+    if (g_imu_diag) {
+        g_imu_diag = 0;
+        static char dbg[128];
+        snprintf(dbg, sizeof(dbg),
+            "DBG2:CR1=%08lX ISR=%08lX MODER=%08lX AFR=%08lX gSt=%d RxSt=%d raw=%lu frames=%lu\r\n",
+            (unsigned long)USART2->CR1,
+            (unsigned long)USART2->ISR,
+            (unsigned long)GPIOD->MODER,
+            (unsigned long)GPIOD->AFR[0],
+            (int)huart2.gState, (int)huart2.RxState,
+            (unsigned long)IMU_GetRawCount(),
+            (unsigned long)IMU_GetFrameCount());
+        bluetooth_send(dbg);
+    }
+
+    /* ====== IMU 诊断: I 开启但 5s 无有效帧 → 报告收发计数 ====== */
+    if (g_imu_stream && IMU_Timeout(5000)) {
+        static uint32_t diag_last = 0;
+        if ((uint32_t)(uwTick - diag_last) >= 2000u) {  /* 每2s一条, 不刷屏 */
+            diag_last = uwTick;
+            static char dbuf[64];
+            snprintf(dbuf, sizeof(dbuf),
+                     "IMU:NO DATA raw=%lu frames=%lu\r\n",
+                     (unsigned long)IMU_GetRawCount(),
+                     (unsigned long)IMU_GetFrameCount());
+            bluetooth_send(dbuf);
+        }
+    }
+
     /* ====== 5ms 控制节拍: IK解算 + 指数平滑 + 批量输出 ====== */
     if ((uint32_t)(uwTick - g_ctrl_last) >= CTRL_PERIOD_MS) {
         g_ctrl_last = uwTick;
@@ -238,6 +341,24 @@ int main(void)
         if (g_flip_start && (int32_t)(uwTick - g_flip_start) >= 0) {
             g_flip_start = 0;
             FlipBegin();
+        }
+
+        /* 坡度层: 姿态ID跟随当前配置, 标定每拍采样, 轮式模式下输出足端修正 */
+        {
+            float pitch = IMU_GetAngle()->pitch;
+            AttCtrl_SetPose(g_front_rev, g_rear_rev,
+                            g_walk_params.stand_h >= FLIP_H);
+            AttCtrl_CalibTick(pitch);
+            if (g_wheel_on) {
+                int slope_state;
+                AttCtrl_Update(pitch, &g_slope_shift, &slope_state);
+            } else {
+                g_slope_shift = 0.0f;
+            }
+            if (g_calib_pending && !AttCtrl_CalibBusy()) {
+                g_calib_pending = 0;
+                bluetooth_send("SLOPE:ON\r\n");
+            }
         }
 
         if (g_mode == MODE_STAND || g_mode == MODE_TROT || g_mode == MODE_STEP) {
@@ -250,15 +371,26 @@ int main(void)
 
                 if (g_mode == MODE_STAND) {
                     float x_leg;
-                    if (g_flip_on && leg < 2) {
-                        /* 翻膝机动: 前腿足端伸到直腿点再收回, 中点翻转膝分支 */
+                    uint8_t leg_bit = (leg < 2) ? 1 : 2;
+                    if (g_flip_on && (g_flip_mask & leg_bit)) {
+                        /* 翻膝机动: 该腿组足端伸到直腿点再收回, 中点翻转膝分支 */
+                        float x0  = (leg < 2) ? g_flip_x0f : g_flip_x0r;
+                        float sgn = (leg < 2) ? 1.0f : -1.0f;   /* 前腿往+伸, 后腿往-伸 */
+                        uint8_t rev_new = (leg < 2) ? g_flip_revf : g_flip_revr;
+                        uint8_t rev_old = (leg < 2) ? g_front_rev : g_rear_rev;
                         float seg = (float)FLIP_SEG_MS / 1000.0f;
                         float t   = (float)(uwTick - g_flip_t0) / 1000.0f;
                         if (t >= 2.0f * seg) {
-                            /* 完成: 应用新分支 + 后续动作 */
+                            /* 完成 (由第一条翻膝腿触发一次) */
                             g_flip_on = 0;
-                            g_front_rev = g_flip_rev;
-                            LegIK_SetFrontReversed(g_flip_rev);
+                            if (g_flip_mask & 1) {
+                                g_front_rev = g_flip_revf;
+                                LegIK_SetFrontReversed(g_flip_revf);
+                            }
+                            if (g_flip_mask & 2) {
+                                g_rear_rev = g_flip_revr;
+                                LegIK_SetRearReversed(g_flip_revr);
+                            }
                             if (g_flip_post == 1)      g_walk_params.stand_h = STAND_H_LOW;
                             else if (g_flip_post == 2) g_walk_params.stand_h = STAND_H_HIGH;
                             else if (g_flip_post == 3) {
@@ -267,15 +399,21 @@ int main(void)
                                 g_walk_t0 = uwTick;
                                 g_mode = MODE_TROT;
                             }
+                            else if (g_flip_post == 4) {
+                                g_walk_t0 = uwTick;      /* 翻膝完成后启动横移走 */
+                                g_mode = MODE_TROT;
+                            }
                             x_leg = StandFootX(leg);
                         } else if (t < seg) {
                             float u = t / seg;          /* 第一段: 旧分支伸腿 */
-                            LegIK_SetFrontReversed(g_front_rev);
-                            x_leg = g_flip_x0 + (g_flip_xm - g_flip_x0) * u;
+                            if (leg < 2) LegIK_SetFrontReversed(rev_old);
+                            else         LegIK_SetRearReversed(rev_old);
+                            x_leg = x0 + (sgn * g_flip_xm - x0) * u;
                         } else {
                             float u = (t - seg) / seg;  /* 第二段: 新分支收腿 */
-                            LegIK_SetFrontReversed(g_flip_rev);
-                            x_leg = g_flip_xm + (g_flip_x0 - g_flip_xm) * u;
+                            if (leg < 2) LegIK_SetFrontReversed(rev_new);
+                            else         LegIK_SetRearReversed(rev_new);
+                            x_leg = sgn * g_flip_xm + (x0 - sgn * g_flip_xm) * u;
                         }
                     } else {
                         /* 站立: 足端 = 前移修正 + 低趴外伸 (StandFootX, ±d, 站高) */
@@ -288,7 +426,10 @@ int main(void)
                             ? (float)(uwTick - g_walk_t0) / 1000.0f
                             : g_step_t;
                     walk_vec3_t ft;
-                    WalkGait_FootTarget(leg, t, d_leg, &ft);
+                    if (g_gait_lat)   /* 横移走: 扫步在 y 方向 (螃蟹步, 抬腿+横扫) */
+                        WalkGait_FootTargetLat(leg, t, d_leg, g_lat_dir, &ft);
+                    else
+                        WalkGait_FootTarget(leg, t, d_leg, &ft);
                     LegIK_SolveServo(leg, ft.x, ft.y, ft.z, deg);
                 }
 
@@ -379,6 +520,25 @@ static int s_parse_num(const char **p)
     return v;
 }
 
+/* 解析指针处浮点数 (支持符号和小数, 如 -3.5), 返回数值并推进指针 */
+static float s_parse_float(const char **p)
+{
+    float v = 0.0f;
+    int   sign = 1;
+    if (**p == '-') { sign = -1; (*p)++; }
+    while (**p >= '0' && **p <= '9') { v = v * 10.0f + (float)(**p - '0'); (*p)++; }
+    if (**p == '.') {
+        (*p)++;
+        float f = 0.1f;
+        while (**p >= '0' && **p <= '9') {
+            v += f * (float)(**p - '0');
+            f *= 0.1f;
+            (*p)++;
+        }
+    }
+    return (float)sign * v;
+}
+
 #if 1   /* ==== 舵机校准: 重装舵机臂后重新标定用 (标定完可改回 0) ==== */
 static uint8_t  g_calib_servo   = 1;     /* 当前校准舵机号 1~12 */
 static uint16_t g_pending_angle = 0;
@@ -392,10 +552,32 @@ static int s_atoi(const char *s) {
 }
 #endif
 
+/* UART 错误自愈: 上电时序噪声(模块复位输出低电平)会产生 FE/ORE,
+ * HAL 错误路径会停掉接收链, 必须在这里清错误+重装接收 */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) {
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        __HAL_UART_CLEAR_FEFLAG(huart);
+        __HAL_UART_CLEAR_PEFLAG(huart);
+        __HAL_UART_CLEAR_NEFLAG(huart);
+        huart->RxState = HAL_UART_STATE_READY;
+        HAL_UART_Receive_IT(huart, &imu_rx_byte, 1);
+    }
+    else if (huart->Instance == USART3) {
+        __HAL_UART_CLEAR_OREFLAG(huart);
+        __HAL_UART_CLEAR_FEFLAG(huart);
+        huart->RxState = HAL_UART_STATE_READY;
+        HAL_UART_Receive_IT(huart, &bt_rx_byte, 1);
+    }
+}
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    if (huart->Instance != USART3) {
-        HAL_UART_Receive_IT(huart, &bt_rx_byte, 1);
+    if (huart->Instance == USART2) {
+        /* IMU 字节流: 喂解析器 (0x55 帧协议) */
+        IMU_ParseByte(imu_rx_byte);
+        HAL_UART_Receive_IT(&huart2, &imu_rx_byte, 1);
         return;
     }
     char c = (char)bt_rx_byte;
@@ -407,29 +589,84 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             static char msg[32];
 
             if (f == 'G' || f == 'g') {
-                g_mode = MODE_STAND;         /* 5ms循环会平滑到站姿 */
+                /* 站立 = 狗高站姿 280 (前后正常膝, 若反折先翻膝再升) */
+                g_flip_on = 0; g_flip_start = 0;
+                g_flip_mask = 0;
+                if (g_front_rev) g_flip_mask |= 1;
+                if (g_rear_rev)  g_flip_mask |= 2;
+                g_flip_revf = 0; g_flip_revr = 0;
+                if (g_flip_mask) {
+                    if (g_walk_params.stand_h < FLIP_H)
+                        g_walk_params.stand_h = FLIP_H;   /* 先到翻膝高度 */
+                    g_flip_post = 2;                      /* 翻完升 280 */
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                } else {
+                    g_walk_params.stand_h = STAND_H_HIGH;
+                }
+                g_mode = MODE_STAND;
                 bluetooth_send("STAND...\r\nOK:STAND\r\n");
             }
             else if (f == 'T' || f == 't') {
-                /* 纯行走: 恢复行走参数 (W会改), 停电机, 取消翻膝, 相位从零开始 */
+                /* 纯 trot (无横移) */
+                TrotStart(SHIFT_OFF, "TROT\r\n");
+            }
+            else if (f == 'E' || f == 'e') {
+                /* 转圈动作: trot + 重心横移 (定死15mm); E/E:1 顺时针, E:0 逆时针 */
+                const char *p = g_line_buf + 1;
+                int sign = 1;
+                if (*p == ':') {
+                    p++;
+                    if (*p == '0') sign = -1;
+                }
+                g_shift_sign = sign;
+                snprintf(msg, sizeof(msg), "SWAY:%d\r\n", sign);
+                TrotStart(SHIFT_IK, msg);
+            }
+            else if (f == 'F' || f == 'f') {
+                /* 横移走 (螃蟹步): 四腿外展横向扫步, F 或 F:1 向右, F:0 向左
+                 * 强制狗姿态 280 (低趴反折膝抬腿会钳FL小腿), 抬腿50mm防拖地 */
+                const char *p = g_line_buf + 1;
+                int dir = 1;
+                if (*p == ':') {
+                    p++;
+                    if (*p == '0') dir = -1;
+                }
                 g_flip_on = 0; g_flip_start = 0;
-                g_walk_params.step_len = 60.0f;
-                g_walk_params.step_h   = 25.0f;
+                g_shift_mode = SHIFT_OFF;
+                g_gait_lat = 1;
+                g_lat_dir  = dir;
+                g_walk_params.stand_h  = STAND_H_HIGH;   /* 强制狗姿态 280 */
+                g_walk_params.step_len = 30.0f;          /* 横移步宽 30mm */
+                g_walk_params.step_h   = 40.0f;          /* 横移抬腿 40mm (原地抬腿结合版) */
                 for (int i = 0; i < 4; i++)
                     Motor_Stop((uint8_t)i);
-                g_walk_t0 = uwTick;          /* 相位从零开始 */
-                g_mode = MODE_TROT;
-                bluetooth_send("TROT\r\n");
+                if (g_front_rev || g_rear_rev) {
+                    /* 反折膝抬腿会钳位: 先翻膝回正常再开走 */
+                    g_flip_mask = (g_front_rev ? 1 : 0) | (g_rear_rev ? 2 : 0);
+                    g_flip_revf = 0;
+                    g_flip_revr = 0;
+                    g_flip_post = 4;
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                } else {
+                    g_walk_t0 = uwTick;
+                    g_mode = MODE_TROT;
+                }
+                snprintf(msg, sizeof(msg), "SIDE:%d\r\n", dir);
+                bluetooth_send(msg);
             }
             else if (f == 'W' || f == 'w') {
                 /* 越障模式: 四轮30%前进 + 高站姿对角交替抬腿 (原地抬不扫步) */
                 g_flip_on = 0; g_flip_start = 0;
+                g_shift_mode = SHIFT_OFF;              /* 无重心横移 */
+                g_gait_lat = 0;
                 g_walk_params.stand_h = STAND_H_HIGH;  /* 高站姿: 抬腿明显 */
                 g_walk_params.step_h   = 70.0f;        /* 抬腿 70mm (RL小腿余量8.9°, 极限88mm) */
                 g_walk_params.step_len = 0.0f;         /* 足端不前后扫, 原地抬 */
-                if (g_front_rev) {
-                    /* 反折分支抬70mm会钳FL小腿: 先翻膝回正常再开走 */
-                    g_flip_rev  = 0;
+                if (g_front_rev || g_rear_rev) {
+                    /* 反折分支抬70mm会钳小腿: 先翻膝回正常再开走 */
+                    g_flip_mask = (g_front_rev ? 1 : 0) | (g_rear_rev ? 2 : 0);
+                    g_flip_revf = 0;
+                    g_flip_revr = 0;
                     g_flip_post = 3;
                     g_flip_start = uwTick + FLIP_SETTLE_MS;
                 } else {
@@ -453,12 +690,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send(msg);
             }
             else if (f == 'H' || f == 'h') {
-                /* 狗姿态高站姿 280: 前腿正常分支 (若当前反折, 先翻膝再升) */
+                /* 狗姿态高站姿 280: 前后腿都正常分支 */
                 g_flip_on = 0; g_flip_start = 0;
-                if (g_front_rev) {
+                g_flip_mask = 0;
+                if (g_front_rev) g_flip_mask |= 1;
+                if (g_rear_rev)  g_flip_mask |= 2;
+                g_flip_revf = 0; g_flip_revr = 0;
+                if (g_flip_mask) {
                     if (g_walk_params.stand_h < FLIP_H)
-                        g_walk_params.stand_h = FLIP_H;   /* 先升到翻膝高度 */
-                    g_flip_rev  = 0;                      /* 目标: 正常分支 */
+                        g_walk_params.stand_h = FLIP_H;   /* 先到翻膝高度 */
                     g_flip_post = 2;                      /* 翻完升 280 */
                     g_flip_start = uwTick + FLIP_SETTLE_MS;
                 } else {
@@ -468,11 +708,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send("HIGH\r\n");
             }
             else if (f == 'K' || f == 'k') {
-                /* 膝盖往前顶高站姿 280: 前腿反折分支 (若当前正常, 先翻膝) */
+                /* 膝盖往前顶高站姿 280: 前腿反折, 后腿正常 */
                 g_flip_on = 0; g_flip_start = 0;
                 g_walk_params.stand_h = STAND_H_HIGH;
-                if (!g_front_rev) {
-                    g_flip_rev  = 1;                      /* 目标: 反折分支 */
+                g_flip_mask = 0;
+                if (!g_front_rev) g_flip_mask |= 1;
+                if (g_rear_rev)   g_flip_mask |= 2;
+                g_flip_revf = 1; g_flip_revr = 0;
+                if (g_flip_mask) {
                     g_flip_post = 0;                      /* 翻完保持 280 */
                     g_flip_start = uwTick + FLIP_SETTLE_MS;
                 }
@@ -480,18 +723,55 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send("KNEE\r\n");
             }
             else if (f == 'L' || f == 'l') {
-                /* 低趴 150: 反折分支趴下 (若当前正常, 先翻膝再趴) */
+                /* 低趴 220: 前腿反折, 后腿正常 */
                 g_flip_on = 0; g_flip_start = 0;
-                if (!g_front_rev) {
+                g_flip_mask = 0;
+                if (!g_front_rev) g_flip_mask |= 1;
+                if (g_rear_rev)   g_flip_mask |= 2;
+                g_flip_revf = 1; g_flip_revr = 0;
+                if (g_flip_mask) {
                     g_walk_params.stand_h = FLIP_H;       /* 先到翻膝高度 */
-                    g_flip_rev  = 1;                      /* 目标: 反折分支 */
                     g_flip_post = 1;                      /* 翻完趴到 LOW */
                     g_flip_start = uwTick + FLIP_SETTLE_MS;
                 } else {
-                    g_walk_params.stand_h = STAND_H_LOW;  /* 已是反折: 直接趴 */
+                    g_walk_params.stand_h = STAND_H_LOW;  /* 已是目标分支: 直接趴 */
                 }
                 g_mode = MODE_STAND;
                 bluetooth_send("LOW\r\n");
+            }
+            else if ((f == 'M' || f == 'm') &&
+                     !(g_line_buf[1] >= '0' && g_line_buf[1] <= '9')) {
+                /* 后腿膝盖往前突低趴 220: 前腿狗腿(正常), 后腿反折, 重心集中
+                 * 注意: 第二字节是数字时放行给后面的 M0:50:1 电机命令 */
+                g_flip_on = 0; g_flip_start = 0;
+                g_flip_mask = 0;
+                if (g_front_rev) g_flip_mask |= 1;        /* 前腿翻回正常 */
+                if (!g_rear_rev) g_flip_mask |= 2;        /* 后腿翻成反折 */
+                g_flip_revf = 0; g_flip_revr = 1;
+                if (g_flip_mask) {
+                    g_walk_params.stand_h = FLIP_H;
+                    g_flip_post = 1;
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                } else {
+                    g_walk_params.stand_h = STAND_H_LOW;
+                }
+                g_mode = MODE_STAND;
+                bluetooth_send("REAR\r\n");
+            }
+            else if (f == 'P' || f == 'p') {
+                /* 后腿膝盖往前突高站姿 280: 前腿狗腿(正常), 后腿反折 */
+                g_flip_on = 0; g_flip_start = 0;
+                g_walk_params.stand_h = STAND_H_HIGH;
+                g_flip_mask = 0;
+                if (g_front_rev) g_flip_mask |= 1;
+                if (!g_rear_rev) g_flip_mask |= 2;
+                g_flip_revf = 0; g_flip_revr = 1;
+                if (g_flip_mask) {
+                    g_flip_post = 0;                      /* 翻完保持 280 */
+                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                }
+                g_mode = MODE_STAND;
+                bluetooth_send("REARH\r\n");
             }
             else if (f == 'X' || f == 'x') {
                 /* 前倾修正: X:毫米 (如 X:20) 正值=足端前移/身体后坐, 站立行走同时生效 */
@@ -506,20 +786,58 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                     bluetooth_send(msg);
                 }
             }
+            else if (f == 'I' || f == 'i') {
+                /* IMU 上报开关: 10Hz 角度流 (帧尾520) */
+                g_imu_stream = !g_imu_stream;
+                bluetooth_send(g_imu_stream ? "IMU:ON\r\n" : "IMU:OFF\r\n");
+                g_imu_diag = 1;  /* 诊断挪到主循环发 (ISR 里连发两条会卡 DMA) */
+            }
+            else if (f == 'Z' || f == 'z') {
+                /* 坡度功能: 标定当前姿态零偏并开启 / 再按关闭 (仅在轮式模式生效) */
+                AttCtrl_Toggle();
+                if (AttCtrl_CalibBusy()) {
+                    g_calib_pending = 1;
+                    bluetooth_send("CALIB...\r\n");
+                } else {
+                    bluetooth_send("SLOPE:OFF\r\n");
+                }
+            }
+            else if (f == 'Q' || f == 'q') {
+                /* 坡度层参数: Q:参数号:值
+                 * 0=lpf_alpha(0.002) 1=up_thr(5°) 2=hyst(2°) 3=gain(3.5mm/°) 4=shift_max(40mm) */
+                const char *p = g_line_buf + 1;
+                if (*p == ':') p++;
+                int idx = s_parse_num(&p);
+                float val = 0.0f;
+                if (*p == ':') { p++; val = s_parse_float(&p); }
+                if (idx >= 0 && idx <= 4) {
+                    switch (idx) {
+                        case 0: g_att.lpf_alpha = val; break;
+                        case 1: g_att.up_thr    = val; break;
+                        case 2: g_att.hyst      = val; break;
+                        case 3: g_att.gain      = val; break;
+                        case 4: g_att.shift_max = val; break;
+                    }
+                    bluetooth_send("AT:OK\r\n");
+                }
+            }
             else if (f == 'R' || f == 'r') {
                 /* 一键滚动: 四电机 30% 占空比正转 (A/B方向已在Motor_Set内纠正) */
+                g_wheel_on = 1;   /* 轮式模式: 坡度层生效 */
                 for (int i = 0; i < 4; i++)
                     Motor_Set((uint8_t)i, 30, 1);
                 bluetooth_send("ROLL\r\n");
             }
             else if (f == 'B' || f == 'b') {
                 /* 一键后退: 四电机 30% 占空比反转 */
+                g_wheel_on = 0;
                 for (int i = 0; i < 4; i++)
                     Motor_Set((uint8_t)i, 30, 0);
                 bluetooth_send("BACK\r\n");
             }
             else if (f == 'S' || f == 's') {
                 /* 一键停: 四电机全停 */
+                g_wheel_on = 0;
                 for (int i = 0; i < 4; i++)
                     Motor_Stop((uint8_t)i);
                 bluetooth_send("STOP\r\n");
@@ -617,16 +935,12 @@ void MPU_Config(void)
   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
-  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
 
-  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
-  MPU_InitStruct.BaseAddress = 0x24000000;   /* 必须512KB对齐, 覆盖整个D1 RAM+摄像头缓冲 */
-  MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
-
+  /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
 }

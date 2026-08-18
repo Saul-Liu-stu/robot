@@ -316,9 +316,6 @@ void BluetoothClient::processBuffer()
     if (lineStr.isEmpty()) return;
 
     // 阶段一: 舵机校准
-    // 诊断: 所有接收到的行都显示在日志
-    emit rawLineReceived(lineStr);
-
     ServoResponse servoRsp = parseServoLine(lineStr);
     if (servoRsp.event != ServoResponse::None) {
         emit servoResponseReceived(servoRsp);
@@ -336,13 +333,17 @@ void BluetoothClient::processBuffer()
     PidMessage pidMsg = parsePidLine(lineStr);
     if (pidMsg.type != PidNone) { emit pidMessageReceived(pidMsg); return; }
 
-    // 阶段三: IMU/编码器 (后期)
+    // 阶段三: IMU/编码器
     TelemetryData data;
     if (parseTelemetryLine(lineStr, data) != 0) {
         data.ts = QDateTime::currentMSecsSinceEpoch();
         m_frameCount++;
         emit telemetryReceived(data);
+        return;
     }
+
+    // 兜底: 未被任何协议识别 → 按原始文本处理 (步态应答等)
+    emit rawLineReceived(lineStr);
 }
 
 // ── 发送舵机角度 ───────────────────────────────────────────────

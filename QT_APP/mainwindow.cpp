@@ -52,11 +52,33 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
     connect(m_bt, &BluetoothClient::servoResponseReceived, this, &MainWindow::onServoResponse);
     connect(m_bt, &BluetoothClient::pidMessageReceived, this, &MainWindow::onPidMessage);
     connect(m_bt, &BluetoothClient::motorResponseReceived, this, &MainWindow::onMotorResponse);
+    connect(m_bt, &BluetoothClient::telemetryReceived, this, &MainWindow::onTelemetry);
     connect(m_bt, &BluetoothClient::rawLineReceived, this, [this](const QString &l) {
         if (l.startsWith(QStringLiteral("READY")))
             appendLog(QStringLiteral("🤝 READY — 固件就绪"), C_GREEN);
         else if (l.startsWith(QStringLiteral("UNK:")))
             appendLog(QStringLiteral("⚠ 固件不认识: %1").arg(l.mid(4)), C_ORANGE);
+        else if (l.startsWith(QStringLiteral("CALIB"))) {
+            appendLog(QStringLiteral("⛰ 坡度标定中 (静止2s)..."), C_ORANGE);
+            m_slopeState->setText(QStringLiteral("状态: 标定中..."));
+            m_slopeState->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_ORANGE));
+        }
+        else if (l.startsWith(QStringLiteral("SLOPE:ON"))) {
+            appendLog(QStringLiteral("⛰ 坡度自适应已开启"), C_GREEN);
+            m_slopeState->setText(QStringLiteral("状态: 已开启"));
+            m_slopeState->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_GREEN));
+        }
+        else if (l.startsWith(QStringLiteral("SLOPE:OFF"))) {
+            appendLog(QStringLiteral("⛰ 坡度自适应已关闭"), C_DIM);
+            m_slopeState->setText(QStringLiteral("状态: 关闭"));
+            m_slopeState->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
+        }
+        else if (l.startsWith(QStringLiteral("AT:OK")))
+            appendLog(QStringLiteral("⛰ 坡度参数已更新"), C_GREEN);
+        else if (l.startsWith(QStringLiteral("IMU:ON")))
+            appendLog(QStringLiteral("📡 IMU 上报已开启"), C_GREEN);
+        else if (l.startsWith(QStringLiteral("IMU:OFF")))
+            appendLog(QStringLiteral("📡 IMU 上报已关闭"), C_DIM);
         else if (l.startsWith(QStringLiteral("STAND...")))
             appendLog(QStringLiteral("🧍 站立中..."), C_BLUE);
         else if (l.startsWith(QStringLiteral("XSH:"))) {
@@ -64,12 +86,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
             m_shiftLabel->setText(QStringLiteral("当前: %1 mm").arg(m_footShift));
             appendLog(QStringLiteral("⚖ 前移修正 %1mm").arg(m_footShift), C_GREEN);
         }
+        else if (l.compare(QStringLiteral("REARH"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("🦵 后顶高站姿 280mm"), C_BLUE);
+        else if (l.compare(QStringLiteral("REAR"), Qt::CaseInsensitive) == 0)
+            appendLog(QStringLiteral("⬇ 后顶低趴 220mm (四轮驱动)"), C_BLUE);
         else if (l.compare(QStringLiteral("HIGH"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("⬆ 高站姿 280mm (狗姿态)"), C_BLUE);
         else if (l.compare(QStringLiteral("KNEE"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("🦵 顶膝高站姿 280mm"), C_BLUE);
         else if (l.compare(QStringLiteral("LOW"), Qt::CaseInsensitive) == 0)
-            appendLog(QStringLiteral("⬇ 低趴 150mm (四轮驱动, 勿发T)"), C_BLUE);
+            appendLog(QStringLiteral("⬇ 低趴 220mm (四轮驱动, 勿发T)"), C_BLUE);
         else if (l.compare(QStringLiteral("FLIP"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("🔄 翻膝机动开始 (~3s)"), C_ORANGE);
         else if (l.compare(QStringLiteral("ROLL"), Qt::CaseInsensitive) == 0)
@@ -77,7 +103,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
         else if (l.compare(QStringLiteral("BACK"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("↩ 后退中 (30%)"), C_ORANGE);
         else if (l.compare(QStringLiteral("CLIMB"), Qt::CaseInsensitive) == 0)
-            appendLog(QStringLiteral("🧗 越障模式: 车轮30% + 对角抬腿40mm"), C_GREEN);
+            appendLog(QStringLiteral("🧗 越障模式: 车轮30% + 对角抬腿70mm"), C_GREEN);
+        else if (l.startsWith(QStringLiteral("SWAY"), Qt::CaseInsensitive)) {
+            QString dir = l.contains(QLatin1String("-1")) ? QStringLiteral("逆时针") : QStringLiteral("顺时针");
+            appendLog(QStringLiteral("🔄 转圈 %1").arg(dir), C_GREEN);
+        }
+        else if (l.startsWith(QStringLiteral("SIDE:"))) {
+            QString dir = l.mid(5).trimmed() == QStringLiteral("1") ? QStringLiteral("向右") : QStringLiteral("向左");
+            appendLog(QStringLiteral("🦀 螃蟹步 %1").arg(dir), C_GREEN);
+        }
         else if (l.compare(QStringLiteral("STOP"), Qt::CaseInsensitive) == 0)
             appendLog(QStringLiteral("🛑 四电机已停"), C_RED);
         else
@@ -192,6 +226,16 @@ void MainWindow::onMotorCmdRequested(int motorNum, int speed, int dir)
     appendLog(QStringLiteral("📤 M%1:%2:%3").arg(motorNum).arg(speed).arg(dir), C_BLUE);
 }
 
+// ── IMU 姿态 ─────────────────────────────────────────────────
+void MainWindow::onTelemetry(const TelemetryData &d)
+{
+    if (d.type == 1)  // IMU: "R:x P:x Y:x"
+        m_imuLabel->setText(QStringLiteral("R: %1°  P: %2°  Y: %3°")
+            .arg(d.imu.roll, 0, 'f', 1)
+            .arg(d.imu.pitch, 0, 'f', 1)
+            .arg(d.imu.yaw, 0, 'f', 1));
+}
+
 // ── 按钮 ────────────────────────────────────────────────────
 void MainWindow::onScanClicked()
 {
@@ -209,14 +253,12 @@ void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->rese
 // ── UI ──────────────────────────────────────────────────────
 void MainWindow::setupUi()
 {
-    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v4.8"));
-    resize(430, 740);
+    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v6.3"));
+    resize(430, 760);
     QPalette pal; pal.setColor(QPalette::Window, QColor(C_BG)); setPalette(pal); setAutoFillBackground(true);
     auto *cw=new QWidget; cw->setStyleSheet(QString("background:%1;").arg(C_BG));
-    auto *sc=new QScrollArea; sc->setWidget(cw); sc->setWidgetResizable(true);
-    sc->setFrameShape(QFrame::NoFrame); sc->setStyleSheet(QString("QScrollArea{background:%1;border:none;}").arg(C_BG));
-    setCentralWidget(sc);
-    auto *rt=new QVBoxLayout(cw); rt->setContentsMargins(8,6,8,4); rt->setSpacing(6);
+    setCentralWidget(cw);
+    auto *rt=new QVBoxLayout(cw); rt->setContentsMargins(8,6,8,0); rt->setSpacing(6);
 
     // 状态 + 蓝牙
     auto *hdr=new QHBoxLayout;
@@ -224,20 +266,34 @@ void MainWindow::setupUi()
     m_statusLabel=new QLabel(QStringLiteral("未连接")); m_statusLabel->setStyleSheet(QString("font-size:15px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
     hdr->addWidget(m_statusIcon); hdr->addWidget(m_statusLabel,1); rt->addLayout(hdr);
 
-    auto *btG=new QGroupBox; sGrp(btG,QStringLiteral("蓝牙 (HC-05 115200bps)"));
-    auto *btL=new QVBoxLayout(btG); auto *bR=new QHBoxLayout;
+    // ── IMU 姿态 (I 开关, 10Hz) ──
+    auto *imuG = new QGroupBox; sGrp(imuG, QStringLiteral("IMU 姿态 (I 开关, 10Hz)"));
+    auto *imuL = new QHBoxLayout(imuG);
+    m_imuLabel = new QLabel(QStringLiteral("R: --  P: --  Y: --"));
+    m_imuLabel->setStyleSheet(QString(
+        "font-size:15px;font-weight:bold;font-family:monospace;"
+        "color:%1;background:transparent;padding:4px;").arg(C_GREEN));
+    imuL->addWidget(m_imuLabel, 1, Qt::AlignCenter);
+    auto *btnI = mkB(QStringLiteral("I 开关"), C_BLUE);
+    btnI->setFixedWidth(64);
+    connect(btnI, &QPushButton::clicked, this, [this]() {
+        m_bt->sendRawText(QStringLiteral("I"));
+        appendLog(QStringLiteral("📤 I"), C_BLUE);
+    });
+    imuL->addWidget(btnI);
+    rt->addWidget(imuG);
+
     m_btnScan=mkB(QStringLiteral("扫描"),C_ACCENT); m_btnConnect=mkB(QStringLiteral("连接"),C_BLUE); m_btnDisconnect=mkB(QStringLiteral("断开"),C_ORANGE);
-    bR->addWidget(m_btnScan); bR->addWidget(m_btnConnect); bR->addWidget(m_btnDisconnect); btL->addLayout(bR);
-    m_devList=new QListWidget; m_devList->setMaximumHeight(90);
-    m_devList->setStyleSheet(QString("QListWidget{font-size:12px;border:1px solid %1;border-radius:6px;background:%2;color:%3;padding:2px;}"
-        "QListWidget::item{padding:6px 6px;margin:2px 0;border-radius:5px;}" "QListWidget::item:selected{background:%4;color:#fff;}")
-        .arg(C_ACCENT,C_CARD,C_TXT,C_BLUE)); btL->addWidget(m_devList); rt->addWidget(btG);
     connect(m_btnScan,&QPushButton::clicked,this,&MainWindow::onScanClicked);
     connect(m_btnConnect,&QPushButton::clicked,this,&MainWindow::onConnectClicked);
     connect(m_btnDisconnect,&QPushButton::clicked,this,&MainWindow::onDisconnectClicked);
+    m_devList=new QListWidget; m_devList->setMaximumHeight(120);
+    m_devList->setStyleSheet(QString("QListWidget{font-size:12px;border:1px solid %1;border-radius:6px;background:%2;color:%3;padding:2px;}"
+        "QListWidget::item{padding:6px 6px;margin:2px 0;border-radius:5px;}" "QListWidget::item:selected{background:%4;color:#fff;}")
+        .arg(C_ACCENT,C_CARD,C_TXT,C_BLUE));
     connect(m_devList,&QListWidget::itemDoubleClicked,this,[this](){onConnectClicked();});
 
-    // ── 舵机/PID (实例先建好, 信号连接; 舵机面板加在页面底部) ──
+    // ── 舵机/PID (实例先建好, 信号连接) ──
     m_servoWidget = new ServoWidget;
     connect(m_servoWidget, &ServoWidget::servoAngleRequested, this, &MainWindow::onServoAngleRequested);
     connect(m_servoWidget, &ServoWidget::confirmYes, this, [this]() { m_bt->sendRawText(QStringLiteral("Y")); appendLog(QStringLiteral("📤 Y"), C_BLUE); });
@@ -253,9 +309,55 @@ void MainWindow::setupUi()
     connect(m_motorWidget, &MotorWidget::rollAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("R")); appendLog(QStringLiteral("📤 R 前进"), C_BLUE); });
     connect(m_motorWidget, &MotorWidget::backAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("B")); appendLog(QStringLiteral("📤 B 后退"), C_BLUE); });
     connect(m_motorWidget, &MotorWidget::stopAllRequested, this, [this]() { m_bt->sendRawText(QStringLiteral("S")); appendLog(QStringLiteral("📤 S 全停"), C_RED); });
-    rt->addWidget(m_motorWidget, 3);
 
-    // ── 步态控制 (2行×3列, 避免一行挤变形) ──
+    // ════════════════════════════════════════════════════════
+    //  页面栈 + 底部导航 (连接 / 矫正 / 运动)
+    // ════════════════════════════════════════════════════════
+    m_stack = new QStackedWidget;
+    rt->addWidget(m_stack, 1);
+
+    // ── 页0: 连接 ──
+    auto *connW = new QWidget;
+    auto *connL = new QVBoxLayout(connW); connL->setContentsMargins(0, 0, 0, 0); connL->setSpacing(6);
+    auto *btG=new QGroupBox; sGrp(btG,QStringLiteral("蓝牙 (HC-05 115200bps)"));
+    auto *btL=new QVBoxLayout(btG); auto *bR=new QHBoxLayout;
+    bR->addWidget(m_btnScan); bR->addWidget(m_btnConnect); bR->addWidget(m_btnDisconnect);
+    btL->addLayout(bR);
+    btL->addWidget(m_devList);
+    connL->addWidget(btG);
+
+    auto *lgG = new QGroupBox; sGrp(lgG, QStringLiteral("运行日志"));
+    auto *lgL = new QVBoxLayout(lgG); lgL->setContentsMargins(2, 2, 2, 2);
+    m_logView=new QTextEdit; m_logView->setReadOnly(true);
+    m_logView->setStyleSheet(QString("QTextEdit{font-size:11px;font-family:Consolas,monospace;color:%1;background:%2;border:none;}").arg(C_GREEN,C_BG));
+    lgL->addWidget(m_logView);
+    connL->addWidget(lgG, 1);
+    m_stack->addWidget(connW);  // index 0
+
+    // ── 页1: 矫正 (可滚动) ──
+    auto *calW = new QWidget;
+    auto *calSc = new QScrollArea;
+    calSc->setWidget(calW); calSc->setWidgetResizable(true);
+    calSc->setFrameShape(QFrame::NoFrame);
+    calSc->setStyleSheet(QString("QScrollArea{background:%1;border:none;}").arg(C_BG));
+    auto *calL = new QVBoxLayout(calW); calL->setContentsMargins(0, 0, 0, 0); calL->setSpacing(6);
+    auto *servoG = new QGroupBox; sGrp(servoG, QStringLiteral("舵机校准 (上电后、发 G/T 前使用)"));
+    auto *servoL = new QVBoxLayout(servoG);
+    servoL->setContentsMargins(2, 2, 2, 2);
+    servoL->addWidget(m_servoWidget);
+    calL->addWidget(servoG);
+    calL->addStretch();
+    m_stack->addWidget(calSc);  // index 1
+
+    // ── 页2: 运动 (可滚动) ──
+    auto *ctrlW = new QWidget;
+    auto *ctrlSc = new QScrollArea;
+    ctrlSc->setWidget(ctrlW); ctrlSc->setWidgetResizable(true);
+    ctrlSc->setFrameShape(QFrame::NoFrame);
+    ctrlSc->setStyleSheet(QString("QScrollArea{background:%1;border:none;}").arg(C_BG));
+    auto *ctrlL = new QVBoxLayout(ctrlW); ctrlL->setContentsMargins(0, 0, 0, 0); ctrlL->setSpacing(6);
+
+    // 步态
     auto *gaitG = new QGroupBox; sGrp(gaitG, QStringLiteral("步态控制"));
     auto *gaitGrid = new QGridLayout(gaitG); gaitGrid->setSpacing(6);
     auto mkGait = [&](const QString &t, const QString &bg, const QString &cmd, int r, int c) {
@@ -266,27 +368,29 @@ void MainWindow::setupUi()
     };
     mkGait(QStringLiteral("G 站姿"),   C_GREEN, QStringLiteral("G"), 0, 0);
     mkGait(QStringLiteral("H 高站姿"), QStringLiteral("#8b5cf6"), QStringLiteral("H"), 0, 1);
-    mkGait(QStringLiteral("K 顶膝"),   QStringLiteral("#06b6d4"), QStringLiteral("K"), 0, 2);
-    mkGait(QStringLiteral("L 低趴"),   QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 3);
-    mkGait(QStringLiteral("A 单步"),   C_ORANGE, QStringLiteral("A"), 1, 0);
-    mkGait(QStringLiteral("T 行走"),   C_BLUE, QStringLiteral("T"), 1, 1);
-    mkGait(QStringLiteral("W 越障"),   QStringLiteral("#14b8a6"), QStringLiteral("W"), 1, 2);
-    rt->addWidget(gaitG);
+    mkGait(QStringLiteral("K 前顶"),   QStringLiteral("#06b6d4"), QStringLiteral("K"), 0, 2);
+    mkGait(QStringLiteral("L 前顶趴"), QStringLiteral("#ec4899"), QStringLiteral("L"), 0, 3);
+    mkGait(QStringLiteral("M 后顶趴"), QStringLiteral("#f59e0b"), QStringLiteral("M"), 1, 0);
+    mkGait(QStringLiteral("P 后顶站"), QStringLiteral("#84cc16"), QStringLiteral("P"), 1, 1);
+    mkGait(QStringLiteral("A 单步"),   C_ORANGE, QStringLiteral("A"), 1, 2);
+    mkGait(QStringLiteral("T 行走"),   C_BLUE, QStringLiteral("T"), 1, 3);
+    mkGait(QStringLiteral("E 顺转"),   QStringLiteral("#d946ef"), QStringLiteral("E"), 2, 0);
+    mkGait(QStringLiteral("E 逆转"),   QStringLiteral("#c026d3"), QStringLiteral("E:0"), 2, 1);
+    mkGait(QStringLiteral("W 越障"),   QStringLiteral("#14b8a6"), QStringLiteral("W"), 2, 2);
+    ctrlL->addWidget(gaitG);
 
-    // ── 前倾修正 X:value (滑杆 + 发送) ──
+    // 前倾修正
     auto *shiftG = new QGroupBox; sGrp(shiftG, QStringLiteral("前倾修正 (足端前移)"));
     auto *shiftL = new QVBoxLayout(shiftG); shiftL->setSpacing(4);
-
     auto *shiftInfo = new QHBoxLayout;
     m_shiftLabel = new QLabel(QStringLiteral("当前: %1 mm").arg(m_footShift));
     m_shiftLabel->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
     shiftInfo->addWidget(m_shiftLabel); shiftInfo->addStretch();
     shiftL->addLayout(shiftInfo);
-
     auto *shiftRow = new QHBoxLayout; shiftRow->setSpacing(6);
     auto *shiftSlider = new QSlider(Qt::Horizontal);
     shiftSlider->setRange(-30, 30);
-    shiftSlider->setValue(m_footShift);  // 15mm, 与固件默认一致
+    shiftSlider->setValue(m_footShift);
     shiftSlider->setStyleSheet(QString(
         "QSlider::groove:horizontal{height:6px;background:%1;border-radius:3px;}"
         "QSlider::handle:horizontal{width:24px;height:24px;margin:-9px 0;"
@@ -298,7 +402,6 @@ void MainWindow::setupUi()
         m_shiftLabel->setText(QStringLiteral("当前: %1 mm").arg(v));
     });
     shiftRow->addWidget(shiftSlider, 1);
-
     auto *shiftSend = mkB(QStringLiteral("发送"), C_BLUE);
     shiftSend->setFixedWidth(64);
     connect(shiftSend, &QPushButton::clicked, this, [this]() {
@@ -307,21 +410,117 @@ void MainWindow::setupUi()
     });
     shiftRow->addWidget(shiftSend);
     shiftL->addLayout(shiftRow);
-    rt->addWidget(shiftG);
+    ctrlL->addWidget(shiftG);
 
-    // ── 舵机校准 (v4.4 重新启用, 放页面底部) ──
-    auto *servoG = new QGroupBox; sGrp(servoG, QStringLiteral("舵机校准 (上电后、发 G/T 前使用)"));
-    auto *servoL = new QVBoxLayout(servoG);
-    servoL->setContentsMargins(2, 2, 2, 2);
-    servoL->addWidget(m_servoWidget);
-    rt->addWidget(servoG);
+    ctrlL->addWidget(m_motorWidget);
 
-    // 日志
-    auto *lgG=new QGroupBox; sGrp(lgG,QStringLiteral("运行日志"));
-    auto *lgL=new QVBoxLayout(lgG); lgL->setContentsMargins(2,2,2,2);
-    m_logView=new QTextEdit; m_logView->setReadOnly(true); m_logView->setMaximumHeight(130);
-    m_logView->setStyleSheet(QString("QTextEdit{font-size:11px;font-family:Consolas,monospace;color:%1;background:%2;border:none;}").arg(C_GREEN,C_BG));
-    lgL->addWidget(m_logView); rt->addWidget(lgG);
+    // 坡度自适应 (轮式爬坡)
+    auto *slopeG = new QGroupBox; sGrp(slopeG, QStringLiteral("坡度自适应 (轮式爬坡)"));
+    auto *slopeGL = new QVBoxLayout(slopeG); slopeGL->setSpacing(6);
 
-    appendLog(QStringLiteral("🚀 调试助手 v2.1 已启动 — 连接后自动识别固件"));
+    auto *slopeTop = new QHBoxLayout;
+    m_slopeState = new QLabel(QStringLiteral("状态: 关闭"));
+    m_slopeState->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
+    slopeTop->addWidget(m_slopeState);
+    auto *btnZ = mkB(QStringLiteral("Z 开关"), C_BLUE);
+    btnZ->setFixedWidth(80);
+    connect(btnZ, &QPushButton::clicked, this, [this]() {
+        m_bt->sendRawText(QStringLiteral("Z"));
+        appendLog(QStringLiteral("📤 Z"), C_BLUE);
+    });
+    slopeTop->addStretch();
+    slopeTop->addWidget(btnZ);
+    slopeGL->addLayout(slopeTop);
+
+    // Q:i:v 五参数
+    struct SlopeParamDef {
+        const char *name; int idx;
+        int rMin, rMax;       // 滑杆范围 (×scale)
+        double scale;         // 显示/发送 = 滑杆值 / scale
+        double init;
+    };
+    static const SlopeParamDef defs[5] = {
+        {"lpf_alpha 坡度低通", 0, 1, 10, 1000.0, 0.002},   // 0.001~0.010
+        {"up_thr 上坡阈值°",   1, 2, 15, 1.0,   5.0},
+        {"hyst 退出迟滞°",     2, 0, 5,  1.0,   2.0},
+        {"gain 后移量mm/°",    3, 10, 60, 10.0,  3.5},     // 1.0~6.0
+        {"shift_max 后移上限mm",4, 10, 60, 1.0,  40.0},
+    };
+    for (int i = 0; i < 5; i++) {
+        auto &row = m_slopeRows[i];
+        auto *rowL = new QVBoxLayout; rowL->setSpacing(2);
+        auto *info = new QHBoxLayout;
+        row.name = new QLabel(QString::fromUtf8(defs[i].name));
+        row.name->setStyleSheet(QString("font-size:12px;color:%1;background:transparent;").arg(C_DIM));
+        row.val = new QLabel;
+        row.val->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_TXT));
+        info->addWidget(row.name); info->addStretch(); info->addWidget(row.val);
+        rowL->addLayout(info);
+
+        auto *sl = new QHBoxLayout; sl->setSpacing(6);
+        row.slider = new QSlider(Qt::Horizontal);
+        row.slider->setRange(defs[i].rMin, defs[i].rMax);
+        row.slider->setValue((int)(defs[i].init * defs[i].scale));
+        row.slider->setStyleSheet(QString(
+            "QSlider::groove:horizontal{height:6px;background:%1;border-radius:3px;}"
+            "QSlider::handle:horizontal{width:24px;height:24px;margin:-9px 0;"
+            "background:%2;border-radius:12px;}"
+            "QSlider::sub-page:horizontal{background:%2;border-radius:3px;}")
+            .arg(C_ACCENT, C_BLUE));
+        int idx = i;
+        connect(row.slider, &QSlider::valueChanged, this, [this, idx]() {
+            double v = m_slopeRows[idx].slider->value() / defs[idx].scale;
+            m_slopeRows[idx].val->setText(QString::number(v, 'f', 3));
+        });
+        row.val->setText(QString::number(defs[i].init, 'f', 3));
+        sl->addWidget(row.slider, 1);
+        auto *send = mkB(QStringLiteral("发送"), C_BLUE);
+        send->setFixedWidth(64);
+        connect(send, &QPushButton::clicked, this, [this, idx]() { sendSlopeParam(idx); });
+        sl->addWidget(send);
+        rowL->addLayout(sl);
+        slopeGL->addLayout(rowL);
+    }
+    ctrlL->addWidget(slopeG);
+    ctrlL->addStretch();
+    m_stack->addWidget(ctrlSc);  // index 2
+
+    // ── 底部导航 ──
+    auto *nav = new QWidget;
+    nav->setStyleSheet(QString("background:%1;border-top:1px solid #232833;").arg(C_CARD));
+    auto *navL = new QHBoxLayout(nav); navL->setContentsMargins(4, 4, 4, 4); navL->setSpacing(4);
+    const QString tabNames[3] = { QStringLiteral("连接"), QStringLiteral("矫正"), QStringLiteral("运动") };
+    for (int i = 0; i < 3; i++) {
+        m_tabBtns[i] = new QPushButton(tabNames[i]);
+        m_tabBtns[i]->setMinimumHeight(42);
+        int idx = i;
+        connect(m_tabBtns[i], &QPushButton::clicked, this, [this, idx]() { setPage(idx); });
+        navL->addWidget(m_tabBtns[i], 1);
+    }
+    rt->addWidget(nav);
+
+    setPage(0);
+    appendLog(QStringLiteral("🚀 调试助手 v6.1 已启动 — 底部横栏切换页面"));
+}
+
+void MainWindow::setPage(int idx)
+{
+    m_stack->setCurrentIndex(idx);
+    for (int i = 0; i < 3; i++) {
+        bool cur = (i == idx);
+        m_tabBtns[i]->setStyleSheet(QString(
+            "QPushButton{border:none;border-radius:8px;padding:6px;"
+            "font-size:14px;font-weight:bold;color:%1;background:%2;}")
+            .arg(cur ? QStringLiteral("#fff") : C_DIM,
+                 cur ? C_BLUE : QStringLiteral("transparent")));
+    }
+}
+
+void MainWindow::sendSlopeParam(int idx)
+{
+    struct Def { double scale; };
+    static const double scales[5] = { 1000.0, 1.0, 1.0, 10.0, 1.0 };
+    double v = m_slopeRows[idx].slider->value() / scales[idx];
+    m_bt->sendRawText(QStringLiteral("Q:%1:%2").arg(idx).arg(v, 0, 'g', 4));
+    appendLog(QStringLiteral("📤 Q:%1:%2").arg(idx).arg(v, 0, 'g', 4), C_BLUE);
 }

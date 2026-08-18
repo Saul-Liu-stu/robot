@@ -2,7 +2,7 @@
  * imu.h
  * WT9011G4K 九轴IMU — UART主动上报解析
  *
- * 接线: IMU TX → PD6(USART2_RX), 9600bps
+ * 接线: IMU TX → PD6(USART2_RX), 115200bps
  * 协议: 0x55 + type + data + checksum
  */
 #ifndef INC_IMU_H_
@@ -25,5 +25,11 @@ void IMU_ParseByte(uint8_t byte);
 
 /* IMU超时检测: 超过timeout_ms未收到数据返回1 */
 int IMU_Timeout(uint32_t timeout_ms);
+
+/* 诊断: USART2 累计收到的原始字节数 */
+uint32_t IMU_GetRawCount(void);
+
+/* 诊断: 累计解析成功的角度帧数 */
+uint32_t IMU_GetFrameCount(void);
 
 #endif

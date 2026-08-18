@@ -44,11 +44,13 @@
   * @retval None
   */
 
-#include "dcmi_ov5640.h"  
-#include "dcmi_ov5640_cfg.h"  
+#include "dcmi_ov5640.h"
+#include "dcmi_ov5640_cfg.h"
+#include "main.h"   /* stm32h7xx_hal 类型定义 */
 
+extern DMA_HandleTypeDef hdma_dcmi;   /* 定义在 Core/Src/dcmi.c, CubeMX 生成的头文件里没有 */
 
-volatile uint8_t OV5640_FrameState = 0;  // DCMI状态标志，当数据帧传输完成时，会被 HAL_DCMI_FrameEventCallback() 中断回调函数置 1     
+volatile uint8_t OV5640_FrameState = 0;  // DCMI状态标志，当数据帧传输完成时，会被 HAL_DCMI_FrameEventCallback() 中断回调函数置 1
 volatile uint8_t OV5640_FPS ;          // 帧率
 
 /*****************************************************************************************************************************************

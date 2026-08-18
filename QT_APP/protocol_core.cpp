@@ -156,7 +156,20 @@ QByteArray buildCommand(uint8_t cmd)
 int parseTelemetryLine(const QString &line, TelemetryData &out)
 {
     if (line.isEmpty()) return 0;
-    if (line.startsWith(QLatin1Char('R'))) {
+
+    // v6.3 新格式: "R,-12,P,34,Y,1579,520" — 逗号分割 7 字段, 末字段 520, 角度×10
+    {
+        QStringList p = line.split(QLatin1Char(','));
+        if (p.size() == 7 && p.last().trimmed() == QStringLiteral("520")) {
+            out.imu.roll  = p[1].toInt() / 10.0f;
+            out.imu.pitch = p[3].toInt() / 10.0f;
+            out.imu.yaw   = p[5].toInt() / 10.0f;
+            out.type = 1; return 1;
+        }
+    }
+
+    // 旧格式 (兼容): "R:1.5 P:-0.3 Y:45.2"
+    if (line.startsWith(QLatin1Char('R')) && line.contains(QLatin1Char(':'))) {
         QStringList p = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
         if (p.size() >= 3) {
             out.imu.roll=p[0].section(QLatin1Char(':'),1).toFloat();

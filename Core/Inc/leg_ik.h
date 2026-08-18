@@ -64,11 +64,13 @@ void LegIK_FK(uint8_t leg, const leg_joint_deg_t *j,
 void LegIK_GetHipPos(uint8_t leg, float *hx, float *hy);
 
 /*
- * 前腿膝分支切换 (仅影响 leg 0/1, 后腿不受影响):
+ * 前后腿膝分支独立切换:
  *   rev=0 正常分支: 大腿后摆 + 膝前折 (狗姿态)
- *   rev=1 反折分支: 大腿前摆 + 膝后折 (膝盖往前顶, 与后腿镜像对称)
+ *   rev=1 反折分支: 大腿前摆 + 膝后折 (膝盖往前顶)
  * 两分支在直腿点 (足端距离=L1+L2) 连续, 翻膝机动利用这一点平滑切换。
+ * 姿态组合: H狗姿态(前0后0) / K前顶(前1后0) / M后顶(前0后1)
  */
 void LegIK_SetFrontReversed(uint8_t rev);
+void LegIK_SetRearReversed(uint8_t rev);
 
 #endif /* INC_LEG_IK_H_ */

@@ -33,7 +33,6 @@ extern "C" {
 /* USER CODE END Includes */
 
 extern DCMI_HandleTypeDef hdcmi;
-extern DMA_HandleTypeDef hdma_dcmi;
 
 /* USER CODE BEGIN Private defines */
 

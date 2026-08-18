@@ -28,12 +28,30 @@ typedef struct {
     float duty;       /* 支撑相比例 beta ∈ (0,1) */
     float stand_h;    /* 站立足端 z (mm, 地面) */
     float foot_x_shift; /* 足端前移修正 (mm): 正值=足端前移/身体后坐, 修正重心偏前导致的身体前倾 */
+    float y_shift;    /* 重心横移 (mm): 摆动相期间身体向支撑对角侧横移, 抬腿前就位 */
 } walk_params_t;
 
 /* 步态参数 (默认值见 walk_gait.c), 运行时可改 */
 extern walk_params_t g_walk_params;
 
+/* 重心横移模式 (T/E 命令选择, 幅值由 y_shift 决定) */
+#define SHIFT_OFF  0   /* 无横移 (纯 trot) */
+#define SHIFT_IK   1   /* IK 足端横移 (整条腿重新解算) */
+extern uint8_t g_shift_mode;
+extern int     g_shift_sign;   /* 横移方向: +1 顺时针旋转, -1 逆时针 (E:0 切换) */
+
 void WalkGait_Init(void);
+
+/* 身体横移量 (mm): 摆动相期间向支撑对角侧横移, 见 walk_gait.c */
+float WalkGait_BodyShiftY(float t);
+
+/*
+ * 横移走 (螃蟹步) 足端轨迹: 扫步方向从前后(x)换成左右(y), x 固定。
+ * 支撑相足端反向扫 (推身体侧移), 摆动相抬腿扫回前方; 对角交替与 trot 相同。
+ * @param dir  行走方向: +1 = 身体向 +y (右), -1 = 向 -y (左)
+ */
+void WalkGait_FootTargetLat(uint8_t leg, float t, float d_signed, int dir,
+                            walk_vec3_t *out);
 
 /*
  * 某腿某时刻的足端目标 (腿系 FRD, mm)

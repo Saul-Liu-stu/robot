@@ -6,6 +6,8 @@
 #include <QPushButton>
 #include <QListWidget>
 #include <QTextEdit>
+#include <QStackedWidget>
+#include <QSlider>
 #include "bluetoothclient.h"
 #include "servowidget.h"
 #include "pidwidget.h"
@@ -25,6 +27,7 @@ private slots:
     void onPidMessage(const PidMessage &m);
     void onMotorResponse(const MotorResponse &r);
     void onMotorCmdRequested(int motorNum, int speed, int dir);
+    void onTelemetry(const TelemetryData &d);
     void onServoAngleRequested(int srv, int angle);
     void onPidCommandRequested(const QString &cmd);
     void onScanClicked();
@@ -44,6 +47,18 @@ private:
     MotorWidget *m_motorWidget;
     QLabel *m_shiftLabel;   // 前倾修正当前值
     int m_footShift = 15;   // 固件最终默认 15mm
+    QLabel *m_imuLabel;     // IMU 姿态 R/P/Y 显示
+
+    // 底部导航
+    QStackedWidget *m_stack;
+    QPushButton *m_tabBtns[3];
+    void setPage(int idx);
+
+    // 坡度自适应
+    QLabel *m_slopeState;
+    struct SlopeRow { QLabel *name; QSlider *slider; QLabel *val; };
+    SlopeRow m_slopeRows[5];
+    void sendSlopeParam(int idx);
     QTextEdit *m_logView;
     int m_lineNum = 0;
 

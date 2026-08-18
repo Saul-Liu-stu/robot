@@ -1,6 +1,6 @@
 # CubeMX WT9011G4K IMU 配置指南
 
-> 9 轴 IMU，UART 主动上报，**当前波特率 9600**
+> 9 轴 IMU，UART 主动上报，**当前波特率 115200（曾误配 9600，见 排错/IMU串口接收故障排查记）**
 
 ---
 
@@ -16,7 +16,7 @@
 
 | 参数 | 值 |
 |------|-----|
-| Baud Rate | **9600** Bits/s |
+| Baud Rate | **115200** Bits/s |
 | Word Length | 8 Bits |
 | Parity | None |
 | Stop Bits | 1 |
