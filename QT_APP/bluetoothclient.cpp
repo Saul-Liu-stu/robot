@@ -296,8 +296,7 @@ bool BluetoothClient::connectRfcomm(const QString &address)
 void BluetoothClient::onReaderData(const QByteArray &data)
 {
     m_buffer.append(data);
-    emit rawLineReceived(QString::fromUtf8(data));
-    processBuffer();
+    processBuffer();  // 只在这里分发, rawLine 仅兜底触发 (避免重复日志)
 }
 
 void BluetoothClient::onReaderError(const QString &msg)

@@ -153,9 +153,24 @@ QByteArray buildCommand(uint8_t cmd)
     f.append((char)cmd); f.append((char)FRAME_FOOTER); return f;
 }
 
+QByteArray buildJoystickCmd(int sp, int st)
+{
+    return QStringLiteral("V:%1:%2\r\n").arg(sp).arg(st).toUtf8();
+}
+
 int parseTelemetryLine(const QString &line, TelemetryData &out)
 {
     if (line.isEmpty()) return 0;
+
+    // v6.4 编码器转速帧: "E,e0,e1,e2,e3,520" — 6 字段, 末字段 520, 整数 RPM
+    if (line.startsWith(QLatin1Char('E'))) {
+        QStringList p = line.split(QLatin1Char(','));
+        if (p.size() == 6 && p.last().trimmed() == QStringLiteral("520")) {
+            for (int i = 0; i < 4; i++)
+                out.encoder.motors[i].rpm = p[1 + i].toInt();
+            out.type = 3; return 3;
+        }
+    }
 
     // v6.3 新格式: "R,-12,P,34,Y,1579,520" — 逗号分割 7 字段, 末字段 520, 角度×10
     {

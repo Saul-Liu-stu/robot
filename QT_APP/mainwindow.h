@@ -12,6 +12,7 @@
 #include "servowidget.h"
 #include "pidwidget.h"
 #include "motorwidget.h"
+#include "joystickwidget.h"
 
 class MainWindow : public QMainWindow
 {
@@ -49,9 +50,14 @@ private:
     int m_footShift = 15;   // 固件最终默认 15mm
     QLabel *m_imuLabel;     // IMU 姿态 R/P/Y 显示
 
+    // v6.4 遥控页 (摇杆 + 编码器)
+    JoystickWidget *m_joy = nullptr;
+    QLabel *m_joyValLabel = nullptr;  // 当前 V:sp:st 显示
+    QLabel *m_encLabel = nullptr;     // 编码器转速显示
+
     // 底部导航
     QStackedWidget *m_stack;
-    QPushButton *m_tabBtns[3];
+    QPushButton *m_tabBtns[4];
     void setPage(int idx);
 
     // 坡度自适应

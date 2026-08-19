@@ -14,6 +14,7 @@ qt_add_executable(RobotBleApp
     servowidget.h        servowidget.cpp
     pidwidget.h          pidwidget.cpp
     motorwidget.h        motorwidget.cpp
+    joystickwidget.h     joystickwidget.cpp
     mainwindow.h         mainwindow.cpp
 )
 
@@ -26,7 +27,7 @@ target_link_libraries(RobotBleApp PRIVATE
 if(ANDROID)
     set_target_properties(RobotBleApp PROPERTIES
         QT_ANDROID_MIN_SDK_VERSION 26
-        QT_ANDROID_TARGET_SDK_VERSION 35
+        QT_ANDROID_TARGET_SDK_VERSION 36
     )
     target_link_libraries(RobotBleApp PRIVATE log)
 endif()

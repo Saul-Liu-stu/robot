@@ -79,10 +79,12 @@ void Error_Handler(void);
 #define ENC2_B_GPIO_Port GPIOE
 #define ENC3_A_Pin GPIO_PIN_11
 #define ENC3_A_GPIO_Port GPIOE
+#define ENC3_A_EXTI_IRQn EXTI15_10_IRQn
 #define ENC3_B_Pin GPIO_PIN_12
 #define ENC3_B_GPIO_Port GPIOE
 #define ENC4_A_Pin GPIO_PIN_13
 #define ENC4_A_GPIO_Port GPIOE
+#define ENC4_A_EXTI_IRQn EXTI15_10_IRQn
 #define ENC4_B_Pin GPIO_PIN_14
 #define ENC4_B_GPIO_Port GPIOE
 #define DIN2_Pin GPIO_PIN_12

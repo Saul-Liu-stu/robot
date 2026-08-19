@@ -74,6 +74,11 @@ struct ImuData { float roll=0, pitch=0, yaw=0; };
 struct MotorInfo { int encoderCount=0, rpm=0; };
 struct EncoderData { MotorInfo motors[4]; };
 struct TelemetryData { int type=0; ImuData imu; EncoderData encoder; qint64 ts=0; };
+// type: 1=IMU(R帧)  2=旧编码器(A帧)  3=编码器转速(E帧, v6.4 J命令)
 int parseTelemetryLine(const QString &line, TelemetryData &out);
+
+// ── 摇杆驱动 (v6.4 V 命令) ──────────────────────────────────────
+// "V:sp:st"  sp=速度(-50~+50, 负=后退)  st=转向(-50~+50, 负=左/正=右)
+QByteArray buildJoystickCmd(int sp, int st);
 
 #endif
