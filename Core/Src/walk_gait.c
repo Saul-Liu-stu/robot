@@ -16,6 +16,7 @@ walk_params_t g_walk_params = {
     .stand_h  = STAND_H_HIGH,  /* 上电默认狗高站姿 280 (G=狗高, L/M切低趴) */
     .foot_x_shift = 15.0f,  /* 前倾修正 (最终实测值), 蓝牙 X: 命令仍可在线调 */
     .y_shift = 15.0f,       /* 重心横移 15mm (定死, 仅 E 转圈动作用) */
+    .foot_x_corr = { 0.0f, 0.0f, 0.0f, -20.0f },  /* RR 足端后移20mm (-30偏后回退, 落地点偏前补偿) */
 };
 
 /* 重心横移模式: 默认关 (T 纯 trot), E 命令开启 */
@@ -63,7 +64,7 @@ void WalkGait_FootTarget(uint8_t leg, float t, float d_signed, walk_vec3_t *out)
         out->x = -S * 0.5f + S * u;
         out->z = g_walk_params.stand_h - H * sinf(3.14159265f * u);
     }
-    out->x += g_walk_params.foot_x_shift;   /* 整体前移修正 (站立/行走统一) */
+    out->x += g_walk_params.foot_x_shift + g_walk_params.foot_x_corr[leg];   /* 整体前移修正 + 单腿零位修正 */
     /* 足端 y = 髋偏置 - 身体横移 (足端反向 = 身体正向), 仅 IK 横移模式生效 */
     out->y = d_signed - ((g_shift_mode == SHIFT_IK) ? WalkGait_BodyShiftY(t) : 0.0f);
 }
@@ -93,5 +94,5 @@ void WalkGait_FootTargetLat(uint8_t leg, float t, float d_signed, int dir,
         out->y = d_signed + dir * (-W * 0.5f + W * u);
         out->z = g_walk_params.stand_h - H * sinf(3.14159265f * u);
     }
-    out->x = g_walk_params.foot_x_shift;   /* x 固定 */
+    out->x = g_walk_params.foot_x_shift + g_walk_params.foot_x_corr[leg];   /* x 固定 + 单腿零位修正 */
 }

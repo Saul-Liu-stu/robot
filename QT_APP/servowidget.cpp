@@ -8,15 +8,15 @@
 #include <QFile>
 #include <QTextStream>
 
-static const QString C_BG    = QStringLiteral("#111318");
-static const QString C_CARD  = QStringLiteral("#181b22");
-static const QString C_TXT   = QStringLiteral("#d0d4dc");
+static const QString C_BG    = QStringLiteral("#141518");
+static const QString C_CARD  = QStringLiteral("#1e2024");
+static const QString C_TXT   = QStringLiteral("#e5e7eb");
 static const QString C_DIM   = QStringLiteral("#6b7280");
-static const QString C_BLUE  = QStringLiteral("#5b8def");
+static const QString C_BLUE  = QStringLiteral("#3b82f6");
 static const QString C_GREEN = QStringLiteral("#22c55e");
 static const QString C_RED   = QStringLiteral("#ef4444");
 static const QString C_ORANGE= QStringLiteral("#f59e0b");
-static const QString C_ACC   = QStringLiteral("#1e2433");
+static const QString C_ACC   = QStringLiteral("#2a2d33");
 
 static QPushButton *mkB(const QString &t, const QString &bg, int h = 30, int fw = 0)
 {
@@ -24,8 +24,8 @@ static QPushButton *mkB(const QString &t, const QString &bg, int h = 30, int fw 
     b->setMinimumHeight(h);
     if (fw) b->setFixedWidth(fw);
     b->setStyleSheet(QString(
-        "QPushButton{border:none;border-radius:6px;padding:4px 8px;"
-        "font-size:12px;font-weight:bold;color:#fff;background:%1;}"
+        "QPushButton{border:none;border-radius:12px;padding:4px 8px;"
+        "font-size:11px;font-weight:bold;color:#fff;background:%1;}"
         "QPushButton:disabled{background:#2a2a30;color:#555;}").arg(bg));
     return b;
 }
@@ -38,31 +38,33 @@ ServoWidget::ServoWidget(QWidget *parent) : QWidget(parent)
 
 void ServoWidget::setupUi()
 {
-    setStyleSheet(QString("background:%1;border-radius:10px;").arg(C_CARD));
-    auto *l = new QVBoxLayout(this);
-    l->setContentsMargins(12, 8, 12, 8); l->setSpacing(5);
+    setStyleSheet(QString("background:%1;border-radius:12px;").arg(C_CARD));
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(12, 8, 12, 8); root->setSpacing(6);
 
     auto *title = new QLabel(QStringLiteral("舵机校准 — 多舵机 + 两步确认"));
-    title->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
-    l->addWidget(title);
+    title->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
+    root->addWidget(title);
     auto *sep = new QFrame; sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet(QStringLiteral("color:#232833;")); sep->setFixedHeight(1);
-    l->addWidget(sep);
+    sep->setStyleSheet(QStringLiteral("color:#2a2d33;")); sep->setFixedHeight(1);
+    root->addWidget(sep);
 
-    // ── 舵机选择 ──
-    auto *selRow = new QHBoxLayout; selRow->setSpacing(4);
+    // ── 主体: 左(舵机选择+槽位) | 右(角度控制+确认) ──
+    auto *body = new QHBoxLayout; body->setSpacing(10);
+
+    // 左栏: 舵机选择 + 槽位
+    auto *left = new QVBoxLayout; left->setSpacing(4);
     m_servoLabel = new QLabel(QStringLiteral("当前: 舵机 1"));
-    m_servoLabel->setStyleSheet(QString("font-size:13px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
-    selRow->addWidget(m_servoLabel); selRow->addStretch();
-    l->addLayout(selRow);
+    m_servoLabel->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
+    left->addWidget(m_servoLabel);
 
     auto *grid = new QGridLayout; grid->setSpacing(3);
     for (int i = 0; i < 12; i++) {
         m_servoBtns[i] = new QPushButton(QString::number(i + 1));
-        m_servoBtns[i]->setMinimumSize(42, 30);
+        m_servoBtns[i]->setMinimumSize(40, 26);
         m_servoBtns[i]->setStyleSheet(QString(
             "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;"
-            "border:1px solid #2a3145;border-radius:5px;}")
+            "border:1px solid #3a3f47;border-radius:12px;}")
             .arg(C_DIM, C_BG));
         int srv = i + 1;
         connect(m_servoBtns[i], &QPushButton::clicked, this, [this, srv]() {
@@ -75,20 +77,50 @@ void ServoWidget::setupUi()
         });
         grid->addWidget(m_servoBtns[i], i / 4, i % 4);
     }
-    l->addLayout(grid);
+    left->addLayout(grid);
     updateServoHighlight();
 
-    auto *sep2 = new QFrame; sep2->setFrameShape(QFrame::HLine);
-    sep2->setStyleSheet(QStringLiteral("color:#232833;")); sep2->setFixedHeight(1);
-    l->addWidget(sep2);
+    auto *slotTitle = new QLabel(QStringLiteral("已记录 — 点槽位保存当前角度"));
+    slotTitle->setStyleSheet(QString("font-size:10px;color:%1;background:transparent;").arg(C_DIM));
+    left->addWidget(slotTitle);
 
-    // ── 角度 ──
+    auto *sg = new QGridLayout; sg->setSpacing(3);
+    for (int i = 0; i < 12; i++) {
+        m_slotBtns[i] = new QPushButton(QStringLiteral("S%1\n--").arg(i + 1));
+        m_slotBtns[i]->setMinimumSize(48, 26);
+        m_slotBtns[i]->setStyleSheet(QString(
+            "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;"
+            "border:1px solid #3a3f47;border-radius:12px;}")
+            .arg(C_DIM, C_BG));
+        int idx = i;
+        connect(m_slotBtns[i], &QPushButton::clicked, this, [this, idx]() { onSlotClicked(idx); });
+        sg->addWidget(m_slotBtns[i], i / 4, i % 4);
+    }
+    left->addLayout(sg);
+
+    // 导出/清空
+    auto *ar = new QHBoxLayout; ar->setSpacing(6);
+    auto *btnE = mkB(QStringLiteral("导出 CSV"), C_GREEN);
+    auto *btnC = mkB(QStringLiteral("清空"), C_RED);
+    connect(btnE, &QPushButton::clicked, this, &ServoWidget::onExportCsv);
+    connect(btnC, &QPushButton::clicked, this, &ServoWidget::onClearAll);
+    ar->addWidget(btnE); ar->addWidget(btnC);
+    left->addLayout(ar);
+    left->addStretch();
+    body->addLayout(left, 2);
+
+    // 竖分隔
+    auto *vsep = new QFrame; vsep->setFrameShape(QFrame::VLine);
+    vsep->setStyleSheet(QStringLiteral("color:#2a2d33;")); vsep->setFixedWidth(1);
+    body->addWidget(vsep);
+
+    // 右栏: 角度 + 滑杆 + 确认
+    auto *right = new QVBoxLayout; right->setSpacing(4);
     m_angleLabel = new QLabel(QStringLiteral("90°"));
     m_angleLabel->setAlignment(Qt::AlignCenter);
-    m_angleLabel->setStyleSheet(QString("font-size:40px;font-weight:bold;color:%1;background:transparent;").arg(C_TXT));
-    l->addWidget(m_angleLabel);
+    m_angleLabel->setStyleSheet(QString("font-size:30px;font-weight:bold;color:%1;background:transparent;").arg(C_TXT));
+    right->addWidget(m_angleLabel);
 
-    // ── 滑块 0~270 ──
     m_slider = new QSlider(Qt::Horizontal);
     m_slider->setRange(0, 270); m_slider->setValue(90);
     m_slider->setStyleSheet(QString(
@@ -98,7 +130,7 @@ void ServoWidget::setupUi()
         "QSlider::sub-page:horizontal{background:%2;border-radius:4px;}")
         .arg(C_ACC, C_BLUE));
     connect(m_slider, &QSlider::valueChanged, this, &ServoWidget::onSliderChanged);
-    l->addWidget(m_slider);
+    right->addWidget(m_slider);
 
     // 刻度
     auto *ticks = new QHBoxLayout;
@@ -108,15 +140,15 @@ void ServoWidget::setupUi()
         lb->setAlignment(v == 0 ? Qt::AlignLeft : v == 270 ? Qt::AlignRight : Qt::AlignCenter);
         ticks->addWidget(lb);
     }
-    l->addLayout(ticks);
+    right->addLayout(ticks);
 
-    // ── 快捷调整 + 设置 ──
+    // 快捷调整 + 设置
     auto *adjRow = new QHBoxLayout; adjRow->setSpacing(4);
-    auto *btnM10 = mkB(QStringLiteral("-10"), C_ACC, 30, 38);
-    auto *btnM1  = mkB(QStringLiteral("-1"),  C_ACC, 30, 38);
-    m_btnSet     = mkB(QStringLiteral("设置"), C_BLUE, 36);
-    auto *btnP1  = mkB(QStringLiteral("+1"),  C_ACC, 30, 38);
-    auto *btnP10 = mkB(QStringLiteral("+10"), C_ACC, 30, 38);
+    auto *btnM10 = mkB(QStringLiteral("-10"), C_ACC, 30, 44);
+    auto *btnM1  = mkB(QStringLiteral("-1"),  C_ACC, 30, 44);
+    m_btnSet     = mkB(QStringLiteral("设置"), C_BLUE, 28);
+    auto *btnP1  = mkB(QStringLiteral("+1"),  C_ACC, 30, 44);
+    auto *btnP10 = mkB(QStringLiteral("+10"), C_ACC, 30, 44);
     connect(btnM10, &QPushButton::clicked, this, [this]() { onQuickAdjust(-10); });
     connect(btnM1,  &QPushButton::clicked, this, [this]() { onQuickAdjust(-1); });
     connect(btnP1,  &QPushButton::clicked, this, [this]() { onQuickAdjust(1); });
@@ -125,51 +157,27 @@ void ServoWidget::setupUi()
     adjRow->addWidget(btnM10); adjRow->addWidget(btnM1);
     adjRow->addWidget(m_btnSet, 1);
     adjRow->addWidget(btnP1); adjRow->addWidget(btnP10);
-    l->addLayout(adjRow);
+    right->addLayout(adjRow);
 
-    // ── 状态 ──
+    // 状态
     m_statusLabel = new QLabel(QStringLiteral("选舵机 → 拖滑块 → 点「设置」"));
     m_statusLabel->setAlignment(Qt::AlignCenter);
     m_statusLabel->setStyleSheet(QString("font-size:11px;color:%1;background:transparent;").arg(C_DIM));
-    l->addWidget(m_statusLabel);
+    right->addWidget(m_statusLabel);
 
-    // ── 确认栏 ──
+    // 确认栏
     auto *cfRow = new QHBoxLayout; cfRow->setSpacing(8);
-    m_btnY = mkB(QStringLiteral("✅ 确认 Y"), C_GREEN, 36);
-    m_btnN = mkB(QStringLiteral("❌ 取消 N"), C_RED, 36);
+    m_btnY = mkB(QStringLiteral("✅ 确认 Y"), C_GREEN, 30);
+    m_btnN = mkB(QStringLiteral("❌ 取消 N"), C_RED, 30);
     m_btnY->setEnabled(false); m_btnN->setEnabled(false);
     connect(m_btnY, &QPushButton::clicked, this, [this]() { emit confirmYes(); });
     connect(m_btnN, &QPushButton::clicked, this, [this]() { emit confirmNo(); });
     cfRow->addWidget(m_btnY); cfRow->addWidget(m_btnN);
-    l->addLayout(cfRow);
+    right->addLayout(cfRow);
+    right->addStretch();
+    body->addLayout(right, 3);
 
-    // ── 已记录 ──
-    auto *slotTitle = new QLabel(QStringLiteral("已记录 — 点槽位保存当前角度"));
-    slotTitle->setStyleSheet(QString("font-size:10px;color:%1;background:transparent;").arg(C_DIM));
-    l->addWidget(slotTitle);
-
-    auto *sg = new QGridLayout; sg->setSpacing(3);
-    for (int i = 0; i < 12; i++) {
-        m_slotBtns[i] = new QPushButton(QStringLiteral("S%1\n--").arg(i + 1));
-        m_slotBtns[i]->setMinimumSize(64, 40);
-        m_slotBtns[i]->setStyleSheet(QString(
-            "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;"
-            "border:1px solid #2a3145;border-radius:6px;}")
-            .arg(C_DIM, C_BG));
-        int idx = i;
-        connect(m_slotBtns[i], &QPushButton::clicked, this, [this, idx]() { onSlotClicked(idx); });
-        sg->addWidget(m_slotBtns[i], i / 4, i % 4);
-    }
-    l->addLayout(sg);
-
-    // ── 导出/清空 ──
-    auto *ar = new QHBoxLayout; ar->setSpacing(6);
-    auto *btnE = mkB(QStringLiteral("导出 CSV"), C_GREEN);
-    auto *btnC = mkB(QStringLiteral("清空"), C_RED);
-    connect(btnE, &QPushButton::clicked, this, &ServoWidget::onExportCsv);
-    connect(btnC, &QPushButton::clicked, this, &ServoWidget::onClearAll);
-    ar->addWidget(btnE); ar->addWidget(btnC);
-    l->addLayout(ar);
+    root->addLayout(body, 1);
 }
 
 void ServoWidget::updateServoHighlight()
@@ -178,8 +186,8 @@ void ServoWidget::updateServoHighlight()
         bool cur = (i + 1 == m_currentServo);
         m_servoBtns[i]->setStyleSheet(QString(
             "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;"
-            "border:2px solid %3;border-radius:5px;}")
-            .arg(cur ? C_TXT : C_DIM, cur ? C_BLUE : C_BG, cur ? C_BLUE : QStringLiteral("#2a3145")));
+            "border:2px solid %3;border-radius:12px;}")
+            .arg(cur ? C_TXT : C_DIM, cur ? C_BLUE : C_BG, cur ? C_BLUE : QStringLiteral("#3a3f47")));
     }
     m_servoLabel->setText(QStringLiteral("当前: 舵机 %1").arg(m_currentServo));
 }
@@ -189,7 +197,7 @@ void ServoWidget::updateAngleDisplay(int a)
     m_currentAngle = a;
     m_angleLabel->setText(QStringLiteral("%1°").arg(a));
     const QString &c = (a >= 0 && a <= 270) ? C_GREEN : C_RED;
-    m_angleLabel->setStyleSheet(QString("font-size:40px;font-weight:bold;color:%1;background:transparent;").arg(c));
+    m_angleLabel->setStyleSheet(QString("font-size:30px;font-weight:bold;color:%1;background:transparent;").arg(c));
 }
 
 void ServoWidget::onSliderChanged(int val) { updateAngleDisplay(val); }
@@ -246,7 +254,7 @@ void ServoWidget::onSlotClicked(int idx)
     m_savedAngles[idx] = m_currentAngle;
     m_slotBtns[idx]->setText(QStringLiteral("S%1\n%2°").arg(idx + 1).arg(m_currentAngle));
     m_slotBtns[idx]->setStyleSheet(QString(
-        "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;border-radius:6px;}")
+        "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;border-radius:12px;}")
         .arg(C_TXT, C_BLUE));
 }
 
@@ -273,7 +281,7 @@ void ServoWidget::onClearAll()
         m_savedAngles[i] = -1;
         m_slotBtns[i]->setText(QStringLiteral("S%1\n--").arg(i + 1));
         m_slotBtns[i]->setStyleSheet(QString(
-            "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;border:1px solid #2a3145;border-radius:6px;}")
+            "QPushButton{font-size:11px;font-weight:bold;color:%1;background:%2;border:1px solid #3a3f47;border-radius:12px;}")
             .arg(C_DIM, C_BG));
     }
 }

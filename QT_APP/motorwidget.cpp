@@ -3,14 +3,14 @@
 #include <QHBoxLayout>
 #include <QFrame>
 
-static const QString C_BG    = QStringLiteral("#111318");
-static const QString C_CARD  = QStringLiteral("#181b22");
-static const QString C_TXT   = QStringLiteral("#d0d4dc");
+static const QString C_BG    = QStringLiteral("#141518");
+static const QString C_CARD  = QStringLiteral("#1e2024");
+static const QString C_TXT   = QStringLiteral("#e5e7eb");
 static const QString C_DIM   = QStringLiteral("#6b7280");
-static const QString C_BLUE  = QStringLiteral("#5b8def");
+static const QString C_BLUE  = QStringLiteral("#3b82f6");
 static const QString C_GREEN = QStringLiteral("#22c55e");
 static const QString C_RED   = QStringLiteral("#ef4444");
-static const QString C_ACC   = QStringLiteral("#1e2433");
+static const QString C_ACC   = QStringLiteral("#2a2d33");
 static const QString MOTOR_NAMES[4] = {
     QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"), QStringLiteral("D")
 };

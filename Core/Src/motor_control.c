@@ -48,9 +48,7 @@ void Motor_Set(uint8_t motor, uint8_t speed, uint8_t dir)
     if (motor > MOTOR_D) return;
     if (speed > MOTOR_SPEED_MAX) speed = MOTOR_SPEED_MAX;
 
-    /* A/B 电机模块接线方向相反, 反转 dir */
-    if (motor == MOTOR_A || motor == MOTOR_B)
-        dir = !dir;
+    /* 2026-08-20 重新接线后 A/B 与 C/D 同极性, 原 A/B 反接补偿已移除 */
 
     const MotorPin_t *m = &motor_pins[motor];
 

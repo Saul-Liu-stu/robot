@@ -4,15 +4,15 @@
 #include <QFrame>
 #include <QPainter>
 
-static const QString C_BG   = QStringLiteral("#111318");
-static const QString C_CARD = QStringLiteral("#181b22");
+static const QString C_BG   = QStringLiteral("#141518");
+static const QString C_CARD = QStringLiteral("#1e2024");
 static const QString C_DIM  = QStringLiteral("#6b7280");
-static const QString C_TXT  = QStringLiteral("#d0d4dc");
-static const QString C_BLUE = QStringLiteral("#5b8def");
+static const QString C_TXT  = QStringLiteral("#e5e7eb");
+static const QString C_BLUE = QStringLiteral("#3b82f6");
 static const QString C_GREEN= QStringLiteral("#22c55e");
 static const QString C_YELLOW=QStringLiteral("#f59e0b");
 static const QString C_RED  = QStringLiteral("#ef4444");
-static const QString C_ACC  = QStringLiteral("#1e2433");
+static const QString C_ACC  = QStringLiteral("#2a2d33");
 
 // ════════════════════════════════════════════════════════════
 //  WaveChart
@@ -51,7 +51,7 @@ void WaveChart::paintEvent(QPaintEvent *)
     int vMax = 300;
 
     // 网格
-    p.setPen(QPen(QColor(QStringLiteral("#1e2433")), 1));
+    p.setPen(QPen(QColor(QStringLiteral("#2a2d33")), 1));
     for (int i = 0; i <= 4; i++) {
         int y = mt + ph * i / 4;
         p.drawLine(ml, y, ml + pw, y);
@@ -91,7 +91,7 @@ void WaveChart::paintEvent(QPaintEvent *)
     }
 
     // PID 输出 (蓝色半透明柱)
-    QColor blue(QStringLiteral("#5b8def")); blue.setAlpha(45);
+    QColor blue(QStringLiteral("#3b82f6")); blue.setAlpha(45);
     p.setPen(Qt::NoPen); p.setBrush(blue);
     for (int i = 0; i < n; i++) {
         int x = ml + pw * i / (n - 1);

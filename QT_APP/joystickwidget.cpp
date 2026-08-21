@@ -42,12 +42,12 @@ void JoystickWidget::paintEvent(QPaintEvent *)
     QPointF c(width() / 2.0, height() / 2.0);
 
     // 底座外圈
-    p.setPen(QPen(QColor(QStringLiteral("#5b8def")), 2));
-    p.setBrush(QColor(QStringLiteral("#1e2433")));
+    p.setPen(QPen(QColor(QStringLiteral("#3b82f6")), 2));
+    p.setBrush(QColor(QStringLiteral("#2a2d33")));
     p.drawEllipse(c, m_radius, m_radius);
 
     // 内圈 + 十字线
-    p.setPen(QPen(QColor(QStringLiteral("#2a3348")), 1));
+    p.setPen(QPen(QColor(QStringLiteral("#3a3f47")), 1));
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(c, m_radius * 0.66, m_radius * 0.66);
     p.drawLine(QPointF(c.x() - m_radius, c.y()), QPointF(c.x() + m_radius, c.y()));
@@ -55,7 +55,7 @@ void JoystickWidget::paintEvent(QPaintEvent *)
 
     // 摇杆头
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(QStringLiteral("#5b8def")));
+    p.setBrush(QColor(QStringLiteral("#3b82f6")));
     p.drawEllipse(m_knobPos, m_knobR, m_knobR);
     p.setBrush(QColor(255, 255, 255, 50));
     p.drawEllipse(m_knobPos - QPointF(m_knobR * 0.3, m_knobR * 0.3), m_knobR * 0.55, m_knobR * 0.55);

@@ -15,9 +15,10 @@
 
 #include <stdint.h>
 
-/* 站姿高度 (mm): 低=四轮驱动模式(低趴220, 腿前后外伸, 不走路), 高=行走模式(抬腿明显) */
-#define STAND_H_LOW    220.0f
+/* 站姿高度 (mm): 低=四轮驱动模式(低趴240, 腿前后外伸, 不走路), 高=行走模式(抬腿明显) */
+#define STAND_H_LOW    240.0f
 #define STAND_H_HIGH   280.0f
+#define STAND_H_L_FRONT 191.3f /* 前顶低趴(L)专用站高: 大腿≈水平(q2=85)+小腿垂直的视觉姿态 */
 
 typedef struct { float x, y, z; } walk_vec3_t;
 
@@ -29,6 +30,7 @@ typedef struct {
     float stand_h;    /* 站立足端 z (mm, 地面) */
     float foot_x_shift; /* 足端前移修正 (mm): 正值=足端前移/身体后坐, 修正重心偏前导致的身体前倾 */
     float y_shift;    /* 重心横移 (mm): 摆动相期间身体向支撑对角侧横移, 抬腿前就位 */
+    float foot_x_corr[4]; /* 单腿足端x零位修正 (mm): RR 落地点偏前 ~30mm (小腿零位偏差补偿) */
 } walk_params_t;
 
 /* 步态参数 (默认值见 walk_gait.c), 运行时可改 */
