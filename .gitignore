@@ -12,6 +12,10 @@ QT_APP/robot_ble_app.apk.idsig
 __pycache__/
 *.pyc
 
+# tools/facetest 构建与运行输出
+tools/facetest/build/
+tools/facetest/*.txt
+
 # 本地 AI 工作流状态
 .spec-workflow/
 

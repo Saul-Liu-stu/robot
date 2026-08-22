@@ -68,12 +68,14 @@ typedef struct { int Enable; int Number; int BaseAddress; int Size; int SubRegio
                  int IsCacheable; int IsBufferable; } MPU_Region_InitTypeDef;
 #define MPU_REGION_ENABLE 0
 #define MPU_REGION_NUMBER0 0
+#define MPU_REGION_NUMBER1 0
 #define MPU_REGION_SIZE_512KB 0
 #define MPU_TEX_LEVEL0 0
 #define MPU_REGION_FULL_ACCESS 0
 #define MPU_INSTRUCTION_ACCESS_DISABLE 0
 #define MPU_INSTRUCTION_ACCESS_ENABLE 0
 #define MPU_ACCESS_SHAREABLE 0
+#define MPU_ACCESS_NOT_SHAREABLE 0
 #define MPU_ACCESS_CACHEABLE 0
 #define MPU_ACCESS_BUFFERABLE 0
 #define MPU_ACCESS_NOT_CACHEABLE 0

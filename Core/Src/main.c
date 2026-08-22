@@ -27,7 +27,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "camera.h"
 #include "motor_control.h"
 #include "new_servo.h"
 #include "leg_control.h"
@@ -38,6 +37,7 @@
 #include "walk_gait.h"
 #include "attitude_control.h"
 #include "drive_ctrl.h"
+#include "gimbal.h"
 #include <stdio.h>
 #include <math.h>
 /* USER CODE END Includes */
@@ -311,6 +311,8 @@ int main(void)
   MX_USART3_UART_Init();
   MX_USART2_UART_Init();
   MX_UART4_Init();
+  MX_TIM13_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
 
   /* ====== 舵机校准：先强制拉低引脚，再开 PWM ====== */
@@ -320,6 +322,8 @@ int main(void)
   NewServo_StartAll();
 
   Motor_Init();   /* 电机 PWM 启动, CCR=0 不转, STBY 拉高待命 */
+
+  Gimbal_Init();  /* 云台舵机 (TIM8 CH3/CH4), 默认居中 135/135 */
 
   /* 外展 4 舵机错开 100ms 上电锁定站姿角, 防乱动 */
   for (int leg = 0; leg < 4; leg++) {
@@ -738,24 +742,37 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             static char msg[32];
 
             if (f == 'G' || f == 'g') {
-                /* 站立 = 狗高站姿 280 (前后正常膝, 若反折先翻膝再升), 收纳姿态直接站起 */
-                g_flip_on = 0; g_flip_start = 0;
-                g_park = 0; g_sit = 0;
-                g_booted = 0;
-                g_flip_mask = 0;
-                if (g_front_rev) g_flip_mask |= 1;
-                if (g_rear_rev)  g_flip_mask |= 2;
-                g_flip_revf = 0; g_flip_revr = 0;
-                if (g_flip_mask) {
-                    if (g_walk_params.stand_h < FLIP_H)
-                        g_walk_params.stand_h = FLIP_H;   /* 先到翻膝高度 */
-                    g_flip_post = 2;                      /* 翻完升 280 */
-                    g_flip_start = uwTick + FLIP_SETTLE_MS;
+                if (g_line_buf[1] == ':') {
+                    /* G:水平:俯仰 → 云台舵机 (0~270°, 俯仰缺省135; 与 G 站姿区分: 带冒号) */
+                    const char *p = g_line_buf + 2;
+                    int pan = s_parse_num(&p);
+                    int tilt = 135;
+                    if (*p == ':') { p++; tilt = s_parse_num(&p); }
+                    Gimbal_Set(GIMBAL_PAN,  (uint16_t)pan);
+                    Gimbal_Set(GIMBAL_TILT, (uint16_t)tilt);
+                    snprintf(msg, sizeof(msg), "GM:%d,%d\r\n",
+                             (int)Gimbal_Get(GIMBAL_PAN), (int)Gimbal_Get(GIMBAL_TILT));
+                    bluetooth_send(msg);
                 } else {
-                    g_walk_params.stand_h = STAND_H_HIGH;
+                    /* 站立 = 狗高站姿 280 (前后正常膝, 若反折先翻膝再升), 收纳姿态直接站起 */
+                    g_flip_on = 0; g_flip_start = 0;
+                    g_park = 0; g_sit = 0;
+                    g_booted = 0;
+                    g_flip_mask = 0;
+                    if (g_front_rev) g_flip_mask |= 1;
+                    if (g_rear_rev)  g_flip_mask |= 2;
+                    g_flip_revf = 0; g_flip_revr = 0;
+                    if (g_flip_mask) {
+                        if (g_walk_params.stand_h < FLIP_H)
+                            g_walk_params.stand_h = FLIP_H;   /* 先到翻膝高度 */
+                        g_flip_post = 2;                      /* 翻完升 280 */
+                        g_flip_start = uwTick + FLIP_SETTLE_MS;
+                    } else {
+                        g_walk_params.stand_h = STAND_H_HIGH;
+                    }
+                    g_mode = MODE_STAND;
+                    bluetooth_send("STAND...\r\nOK:STAND\r\n");
                 }
-                g_mode = MODE_STAND;
-                bluetooth_send("STAND...\r\nOK:STAND\r\n");
             }
             else if (f == 'T' || f == 't') {
                 /* 连续 Trot: T 前进 / T:-1 倒着走 (负步幅+轮反向助走)
@@ -1221,11 +1238,17 @@ void MPU_Config(void)
   MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
-  MPU_InitStruct.IsShareable = MPU_ACCESS_SHAREABLE;
-  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
-  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
-
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /* 整个 D1 RAM 0x24000000: 非缓存 (含摄像头帧缓冲 0x24010000) */
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+  MPU_InitStruct.BaseAddress = 0x24000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 

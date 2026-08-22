@@ -8,11 +8,13 @@
 #include <QTextEdit>
 #include <QStackedWidget>
 #include <QSlider>
+#include <QLineEdit>
 #include "bluetoothclient.h"
 #include "servowidget.h"
 #include "pidwidget.h"
 #include "motorwidget.h"
 #include "joystickwidget.h"
+#include "camerawidget.h"
 
 class MainWindow : public QMainWindow
 {
@@ -67,10 +69,35 @@ private:
     void setDirState(const QString &dir, const QString &color = QString());
     void setGaitEnabled(bool on);
 
-    // 底部导航
+    // 左侧竖栏导航 (6 页: 连接/矫正/运动/遥控/云台/图传)
     QStackedWidget *m_stack;
-    QPushButton *m_tabBtns[4];
+    QPushButton *m_tabBtns[6];
+    CameraWidget *m_cameraWidget = nullptr;   // v6.12 第6页 WiFi 图传
     void setPage(int idx);
+
+    // v6.13 云台操作页 (G:水平:俯仰 命令, 0~180°, 回显 GM:pan,tilt, 交互复刻矫正页)
+    QLabel *m_gimbalAxisLabel = nullptr;    // 当前轴标题
+    QLabel *m_gimbalAngleLabel = nullptr;   // 大角度显示 (仿矫正页)
+    QLabel *m_gimbalStateLabel = nullptr;   // 状态提示 (回显驱动)
+    QPushButton *m_gimbalAxisBtns[2] = { nullptr, nullptr };  // 水平/俯仰 轴切换
+    QSlider *m_gimbalSlider = nullptr;      // 单滑杆, 显示/调节当前轴
+    int m_gimbalAxis = 0;                   // 0=水平 pan, 1=俯仰 tilt
+    int m_gimbalPanDeg = 90, m_gimbalTiltDeg = 90;   // 两轴记录值 (180°舵机居中, 发送时带完整两轴)
+    void setGimbalAxis(int axis);           // 切轴: 高亮 + 滑杆/角度显示同步该轴值
+    void sendGimbal(int pan, int tilt);     // 发 G:pan:tilt (始终两轴完整, 避开固件缺省坑)
+
+    // v6.12 WiFi 摄像头连接组 (连接页, 与蓝牙并排)
+    QLineEdit *m_camIpEdit;
+    QPushButton *m_btnCamConnect, *m_btnCamDisconnect, *m_btnCamWifi;
+    QLabel *m_camStatusLabel;
+    void onCamConnectClicked();
+    void onCamDisconnectClicked();
+    void onOpenWifiSettings();
+
+    // v6.12 画面悬浮小窗 (遥控时悬浮看摄像头画面)
+    MiniCamWindow *m_miniCam = nullptr;
+    QTimer *m_miniCamTimer = nullptr;
+    void onMiniCamToggled(bool on);
 
     // 坡度自适应
     QLabel *m_slopeState;

@@ -6,33 +6,23 @@
 
 ## 一、CubeMX 内已固化（无需操作）
 
-| 项 | CubeMX 配置位置 | 验证 |
-|----|---------------|------|
-| DCMI PCLK Rising | DCMI → Pixel Clock Polarity: Rising Edge | dcmi.c 第43行 |
-| DCMI 引脚 Pull-up | 每个 DCMI 脚 → GPIO Pull-up | dcmi.c 6 处 `GPIO_PULLUP` |
-| DCMI DMA Priority High | DCMI → DMA Settings → Priority: High | dcmi.c 第145行 |
-| DCMI DMA FIFO HalfFull | DCMI → DMA Settings → FIFO Threshold: Half Full | dcmi.c 第147行 |
-
-> ✅ 以上四项已在 CubeMX 文件中配好，Generate Code 后自动正确，不用再修。
+> ⚠️ 2026-08-22 摄像头与 LCD 已移除。本节的 DCMI 固化项**全部废弃**——
+> 前提是已在 .ioc 里禁用 DCMI、SPI6(LCD)、SCCB 相关引脚并重新 Generate
+> （Generate 后 dcmi.c/dcmi.h/spi.c/spi.h 消失，MX_DCMI_Init/MX_SPI6_Init 调用消失）。
+> 若尚未禁用，旧 DCMI 配置仍在但无摄像头硬件，无实际影响。
 
 ---
 
 ## 二、手动修复（CubeMX 改不了的）
 
-### 修复 1：`Core/Inc/dcmi.h` 加 DMA 句柄 extern
+### 修复 1：~~`Core/Inc/dcmi.h` 加 DMA 句柄 extern~~（2026-08-22 废弃）
 
-CubeMX 生成后，dcmi.h 只有这一行：
-```c
-extern DCMI_HandleTypeDef hdcmi;
-```
+摄像头移除 + .ioc 禁用 DCMI 后，dcmi.c/h 整个消失，本项**不再需要**。
+若 DCMI 仍未从 .ioc 移除，则 Generate 后仍需补 `extern DMA_HandleTypeDef hdma_dcmi;`。
 
-**补一行：**
-```c
-extern DCMI_HandleTypeDef hdcmi;
-extern DMA_HandleTypeDef hdma_dcmi;  /* ← 手动加这行 */
-```
+### 修复 2：`Core/Src/main.c` MPU 配置（仍然必做）
 
-### 修复 2：`Core/Src/main.c` MPU 配置
+> 摄像头移除**不影响**本项：蓝牙 TX 仍走 DMA，D-Cache/DMA 一致性依赖此配置。
 
 CubeMX 生成后 MPU_Config 只有 NUMBER0 且是 cacheable 的。**替换整个函数体：**
 
@@ -67,6 +57,20 @@ void MPU_Config(void)
 }
 ```
 
+### 修复 3：工程目录重构后的源文件清单（2026-08-21 起必查）
+
+应用层代码已全部移入 `Hardware/`（leg_ik / walk_gait / motor_control / new_servo / leg_control / encoder / imu / bluetooth_control / drive_ctrl / attitude_control + leg_config.h），`Core/` 只剩 CubeMX 生成文件。
+
+CubeMX Generate Code 后**检查**（否则用户模块全丢，链接报 `undefined reference to 'WalkGait_FootTarget'` 等）：
+
+1. `Debug/Hardware/subdir.mk` 的 C_SRCS / OBJS / C_DEPS / clean 四处应包含上述 10 个模块——缺了手动加回
+2. 编译若提示 Hardware 文件未参与构建 → 确认 `.cproject` 里 Hardware 仍是源目录
+
+```bash
+# 快速验证 (期望 ≥10)
+grep -c "walk_gait\|leg_ik\|attitude_control\|motor_control" Debug/Hardware/subdir.mk
+```
+
 ---
 
 ## 三、快速验证命令
@@ -93,6 +97,5 @@ grep -c "24000000\|NOT_CACHEABLE\|NUMBER1" Core/Src/main.c
 
 | 漏修项 | 症状 |
 |--------|------|
-| dcmi.h 缺 hdma_dcmi | **编译失败**：`hdma_dcmi undeclared` |
-| MPU 非缓存 | **画面黑线/卡死/渐变黑**，D-Cache 一致性问题 |
-| MPU 缺 0x24000000 区域 | **黑屏** 或 **蓝牙回复乱码**：D1 RAM 可缓存，DMA 读旧数据 |
+| ~~dcmi.h 缺 hdma_dcmi~~ | ~~编译失败~~（2026-08-22 DCMI 移除后废弃） |
+| MPU 非缓存 | **蓝牙回复乱码**：D1/D2 RAM 可缓存，DMA 读旧数据 |

@@ -33,6 +33,7 @@ extern "C" {
 /* USER CODE END Includes */
 
 extern DCMI_HandleTypeDef hdcmi;
+extern DMA_HandleTypeDef hdma_dcmi;  /* ← 手动加这行 (CubeMX 生成后会丢) */
 
 /* USER CODE BEGIN Private defines */
 

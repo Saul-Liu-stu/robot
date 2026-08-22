@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Bluetooth)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Bluetooth Network)
 
 qt_add_executable(RobotBleApp
     main.cpp
@@ -15,6 +15,9 @@ qt_add_executable(RobotBleApp
     pidwidget.h          pidwidget.cpp
     motorwidget.h        motorwidget.cpp
     joystickwidget.h     joystickwidget.cpp
+    camerawidget.h       camerawidget.cpp
+    color_detector.h     color_detector.cpp
+    motion_detector.h    motion_detector.cpp
     mainwindow.h         mainwindow.cpp
 )
 
@@ -22,6 +25,7 @@ target_link_libraries(RobotBleApp PRIVATE
     Qt6::Core
     Qt6::Widgets
     Qt6::Bluetooth
+    Qt6::Network
 )
 
 if(ANDROID)
