@@ -3,6 +3,8 @@
 #include <QPen>
 #include <QVector>
 #include <QDebug>
+#include <QtMath>
+#include <algorithm>
 
 // HSV 说明 (与 OpenCV 约定一致): H 0-179, S 0-255, V 0-255
 // 整数 RGB→HSV (H = 0..359, 除以2 = 0..179)

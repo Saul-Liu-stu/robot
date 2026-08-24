@@ -1,17 +1,17 @@
 /*
  * attitude_control.c
- * IMU 坡度自适应层实现 (仅上坡, 仅轮式滚动模式, 镇定层暂缓)
- * 数据源: imu.c 解析的 pitch (WT9011G4K, 10Hz 主动上报)
+ * IMU 行为层实现: 站立自稳 (H/K高站姿) + Z 标定
+ * 数据源: imu.c 解析的 pitch/roll (WT9011G4K, 10Hz 主动上报)
+ * 2026-08-23: 坡度自适应层已删除 (未实测、与自稳职责重叠), Z 改为纯自稳标定
  */
 #include "attitude_control.h"
 
-att_ctrl_params_t g_att = {
-    .lpf_alpha = 0.002f,   /* 约 2.5s 时间常数 */
-    .up_thr    = 5.0f,     /* 上坡判定阈值 (deg) */
-    .hyst      = 2.0f,     /* 退出迟滞 (deg) */
-    .gain      = 3.5f,     /* 每度坡度后移 3.5mm (≈站高×tan) */
-    .shift_max = 40.0f,    /* 后移上限 */
-};
+/* 站立自稳参数 (H/K 高站姿专用, 实测调好后写死) */
+#define LV_LPF     0.15f   /* 低通系数 (10Hz 调用 → 约0.6s时间常数) */
+#define LV_HALF_BL 190.0f  /* 前后髋距半长 mm (与 leg_ik.h BODY_BL=380 一致) */
+#define LV_HALF_BW 90.0f   /* 左右髋距半宽 mm (与 leg_ik.h BODY_BW=180 一致) */
+#define LV_Z_ROOM_BASE 304.6f  /* 伸腿上限基准: 直腿点足端z(309.6@x=15) − 5mm安全余量 */
+#define LV_DEAD     1.0f   /* 死区 (deg): ±1°内不响应 (实测反馈"太敏感", 软死区无阶跃) */
 
 #define POSE_NUM    5       /* 姿态槽位: H/K/L/M/P */
 #define CALIB_N     400     /* 400 × 5ms = 2 秒标定采样 */
@@ -19,15 +19,19 @@ att_ctrl_params_t g_att = {
 /* 姿态ID: 0=H(0,0高) 1=K(1,0高) 2=L(1,0低) 3=M(0,1低) 4=P(0,1高)
  * 上电默认低趴(0,0低)并入槽0与H共用, 使用前按 Z 标定 */
 static uint8_t  s_pose     = 0;
-static float    s_offset[POSE_NUM] = {0, 0, 0, 0, 0};
-static uint8_t  s_enabled[POSE_NUM] = {0, 0, 0, 0, 0};
+static float    s_offset[POSE_NUM] = {0, 0, 0, 0, 0};    /* pitch 零偏 */
+static float    s_roffset[POSE_NUM] = {0, 0, 0, 0, 0};   /* roll 零偏 */
+static uint8_t  s_calib_done[POSE_NUM] = {0, 0, 0, 0, 0}; /* 已标定 (自稳允许开启) */
 
 static uint8_t  s_calib      = 0;
 static uint32_t s_calib_n    = 0;
 static float    s_calib_sum  = 0;
+static float    s_calib_rsum = 0;   /* roll 标定和 */
 
-static float    s_slope = 0;    /* 低通后的相对零偏 pitch (正=抬头/上坡方向为负) */
-static uint8_t  s_state = 0;    /* 0=平 1=上坡 */
+/* 自稳状态 */
+static uint8_t  s_lv_en = 0;    /* L:命令开关 */
+static float    s_lp_p  = 0;    /* 低通后的相对零偏 pitch (deg, 前倾为正) */
+static float    s_lp_r  = 0;    /* 低通后的相对零偏 roll  (deg, 右倾为正) */
 
 void AttCtrl_SetPose(uint8_t front_rev, uint8_t rear_rev, uint8_t high)
 {
@@ -42,59 +46,78 @@ void AttCtrl_SetPose(uint8_t front_rev, uint8_t rear_rev, uint8_t high)
     }
 }
 
-void AttCtrl_CalibTick(float pitch)
+void AttCtrl_CalibTick(float pitch, float roll)
 {
     if (!s_calib) return;
-    s_calib_sum += pitch;
+    s_calib_sum  += pitch;
+    s_calib_rsum += roll;
     if (++s_calib_n >= CALIB_N) {
-        /* 标定完成: 零偏存入当前姿态槽, 自动开启功能 */
-        s_offset[s_pose]  = s_calib_sum / (float)s_calib_n;
-        s_enabled[s_pose] = 1;
-        s_slope = 0;
-        s_state = 0;
+        /* 标定完成: 零偏存入当前姿态槽, 自稳允许开启 */
+        s_offset[s_pose]     = s_calib_sum  / (float)s_calib_n;
+        s_roffset[s_pose]    = s_calib_rsum / (float)s_calib_n;
+        s_calib_done[s_pose] = 1;
         s_calib = 0;
     }
 }
 
-void AttCtrl_Toggle(void)
+void AttCtrl_CalibStart(void)
 {
-    if (s_enabled[s_pose]) {
-        s_enabled[s_pose] = 0;
-        s_slope = 0;
-        s_state = 0;
-    } else {
-        s_calib     = 1;
-        s_calib_n   = 0;
-        s_calib_sum = 0;
-    }
+    s_calib      = 1;
+    s_calib_n    = 0;
+    s_calib_sum  = 0;
+    s_calib_rsum = 0;
 }
 
 uint8_t AttCtrl_CalibBusy(void) { return s_calib; }
-uint8_t AttCtrl_Enabled(void)   { return s_enabled[s_pose]; }
 
-void AttCtrl_Update(float pitch, float *out_shift, int *out_state)
+/* ====== 站立自稳 (H/K 高站姿) ====== */
+
+uint8_t AttCtrl_LevelToggle(void)
 {
-    *out_shift = 0;
-    *out_state = 0;
-    if (!s_enabled[s_pose] || s_calib) return;
+    if (!s_calib_done[s_pose]) return 2;   /* 当前姿态未标定, 先 Z */
+    s_lv_en = !s_lv_en;
+    if (!s_lv_en) { s_lp_p = 0.0f; s_lp_r = 0.0f; }
+    return s_lv_en ? 0u : 1u;              /* 0=已开 1=已关 */
+}
 
-    /* 相对零偏的 pitch 低通 (前倾为正) */
-    float flat = pitch - s_offset[s_pose];
-    s_slope += g_att.lpf_alpha * (flat - s_slope);
+uint8_t AttCtrl_LevelEnabled(void) { return s_lv_en; }
 
-    /* 上坡判定: 抬头(后仰)为负 → 上坡角 = -s_slope, 带迟滞 */
-    float up_deg = -s_slope;
-    if (s_state == 0) {
-        if (up_deg > g_att.up_thr) s_state = 1;
-    } else {
-        if (up_deg < g_att.up_thr - g_att.hyst) s_state = 0;
+void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active, float dz[4])
+{
+    for (int i = 0; i < 4; i++) dz[i] = 0.0f;
+    /* 仅 active(主循环判定: 站立静止+开关/无倾斜驱动) + 已标定 + H/K高站姿 时输出 */
+    if (!active || !s_calib_done[s_pose] || s_pose > 1) {
+        s_lp_p = 0.0f; s_lp_r = 0.0f;   /* 不输出时清低通, 重新激活从0平滑爬升 */
+        return;
     }
+    /* 相对零偏的低通角度 (前倾为正 / 右倾为正) */
+    float flat_p = pitch - s_offset[s_pose];
+    float flat_r = roll  - s_roffset[s_pose];
+    s_lp_p += LV_LPF * (flat_p - s_lp_p);
+    s_lp_r += LV_LPF * (flat_r - s_lp_r);
 
-    *out_state = s_state;
-    if (s_state) {
-        /* 足端整体后移: 身体前压 → 前后腿载荷均衡 → 身体与坡面平行 */
-        float sh = -g_att.gain * up_deg;
-        if (sh < -g_att.shift_max) sh = -g_att.shift_max;
-        *out_shift = sh;
+    /* 死区 ±1°: 微小晃动不响应 (软死区, 无阶跃) */
+    float dp = s_lp_p, dr = s_lp_r;
+    if (dp >  LV_DEAD)      dp -= LV_DEAD;
+    else if (dp < -LV_DEAD) dp += LV_DEAD;
+    else                    dp = 0.0f;
+    if (dr >  LV_DEAD)      dr -= LV_DEAD;
+    else if (dr < -LV_DEAD) dr += LV_DEAD;
+    else                    dr = 0.0f;
+
+    /* 往哪边倾哪边腿伸长撑回水平: 前倾→前腿伸/后腿收; 右倾→右腿伸/左腿收 */
+    float pc = dp * 0.0174533f * LV_HALF_BL;
+    float rc = dr * 0.0174533f * LV_HALF_BW;
+    dz[0] =  pc - rc;    /* FL */
+    dz[1] =  pc + rc;    /* FR */
+    dz[2] = -pc - rc;    /* RL */
+    dz[3] = -pc + rc;    /* RR */
+    /* 单腿z上限: 按当前站高算剩余伸腿量 (站高越低放得越开)
+     * 280≈24.6mm(7.5°坡) / 230≈74.6mm(23°坡) / 220≈84.6mm(26.5°坡) / 210≈94.6mm(30°坡) */
+    float dz_lim = LV_Z_ROOM_BASE - stand_h;
+    if (dz_lim < 0.0f) dz_lim = 0.0f;
+    for (int i = 0; i < 4; i++) {
+        if (dz[i] >  dz_lim) dz[i] =  dz_lim;
+        if (dz[i] < -dz_lim) dz[i] = -dz_lim;
     }
 }

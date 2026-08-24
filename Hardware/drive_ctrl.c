@@ -28,6 +28,7 @@ static float   s_duty   = 0;   /* 斜坡后的实际速度占空比 -100~+100 */
 static float   s_tilt_p = 0;   /* 当前俯仰倾斜 (mm, +低头) */
 static float   s_tilt_r = 0;   /* 当前侧倾倾斜 (mm, +右倾) */
 static uint8_t s_active = 0;   /* 驱动激活 (写电机) */
+static uint8_t s_no_tilt = 0;  /* V模式1: 无倾斜补偿驱动 (身体水平由自稳层保持) */
 
 /* 方向按键状态: 固定倾斜全程保持, 停止才回平 */
 static uint8_t s_btn_mode = 0;
@@ -69,6 +70,8 @@ void DriveCtrl_SetButton(uint8_t dir, int8_t spd)
     if (dir > 3) dir = 0;
     if (spd > 50) spd = 50;
     if (spd < 10) spd = 10;
+    s_no_tilt = 0;   /* D 按键有固定倾斜表 */
+
     /* 切换动作(换方向或从摇杆切来): 先回平再压新方向 */
     if (!s_btn_mode || s_btn_dir != dir)
         s_flatten_pending = 1;
@@ -97,10 +100,14 @@ void DriveCtrl_Reset(void)
     s_tilt_r = 0;
     s_plateau = 0;
     s_btn_mode = 0;
+    s_no_tilt = 0;
     s_flatten_pending = 0;
     for (int i = 0; i < 4; i++)
         Motor_Stop((uint8_t)i);
 }
+
+void DriveCtrl_SetNoTilt(uint8_t on) { s_no_tilt = on; }
+uint8_t DriveCtrl_NoTilt(void)      { return s_no_tilt; }
 
 static float clampf2(float v, float lo, float hi)
 {
@@ -162,6 +169,7 @@ void DriveCtrl_Update(void)
              : g_drive.k_pitch * ((float)s_cmd_sp - s_duty);   /* +低头 */
         tr = g_drive.k_roll * (float)s_cmd_st;                  /* +右倾 */
     }
+    if (s_no_tilt) { tp = 0.0f; tr = 0.0f; }  /* V模式1: 关闭倾斜补偿 (经 tilt_slew 平滑回平) */
     tp = clampf2(tp, -g_drive.pitch_max, g_drive.pitch_max);
     tr = clampf2(tr, -g_drive.roll_max,  g_drive.roll_max);
     /* 倾斜过渡斜坡 (别太猛) */

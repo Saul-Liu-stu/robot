@@ -13,13 +13,18 @@
 extern TIM_HandleTypeDef htim13;
 extern TIM_HandleTypeDef htim14;
 
-#define GIMBAL_ANGLE_MAX  180   /* 180° 舵机全行程 */
+/* 角度范围 (实测确定 2026-08-23):
+ * pan  0~180, 90=正对前方, <90 往右, >90 往左
+ * tilt 75~180, 120=正对前方, <120 往下(机械限位 45°→75), >120 往上 */
+#define GIMBAL_PAN_MIN    0
+#define GIMBAL_PAN_MAX  180
+#define GIMBAL_TILT_MIN  75
+#define GIMBAL_TILT_MAX 180
 
-/* 上电初始角度: 0=保持不动(CCR=0无脉冲, 舵机不使力);
- * 实测好初始角度后填入并置 1, 上电即回中 */
-#define GIMBAL_BOOT_MOVE  0
+/* 上电初始角度: 1=上电即回正对前方 (实测已确认) */
+#define GIMBAL_BOOT_MOVE  1
 
-static uint16_t s_angle[2] = { 90, 90 };   /* 初始角度候选 (水平/俯仰), 待实测 */
+static uint16_t s_angle[2] = { 90, 120 };   /* 正对前方: 水平90 / 俯仰120 */
 
 /* 角度 → CCR (0.5~2.5ms 脉宽) */
 static uint16_t AngleToPulse(uint16_t angle)
@@ -43,7 +48,12 @@ void Gimbal_Init(void)
 void Gimbal_Set(uint8_t ch, uint16_t angle_deg)
 {
     if (ch > GIMBAL_TILT) return;
-    if (angle_deg > GIMBAL_ANGLE_MAX) angle_deg = GIMBAL_ANGLE_MAX;
+    if (ch == GIMBAL_PAN) {
+        if (angle_deg > GIMBAL_PAN_MAX) angle_deg = GIMBAL_PAN_MAX;
+    } else {
+        if (angle_deg > GIMBAL_TILT_MAX) angle_deg = GIMBAL_TILT_MAX;
+        if (angle_deg < GIMBAL_TILT_MIN) angle_deg = GIMBAL_TILT_MIN;  /* 机械限位 */
+    }
     s_angle[ch] = angle_deg;
     if (ch == GIMBAL_PAN)
         __HAL_TIM_SET_COMPARE(&htim13, TIM_CHANNEL_1, AngleToPulse(angle_deg));

@@ -14,6 +14,7 @@
 #include <QTimer>
 #include "color_detector.h"
 #include "motion_detector.h"
+#include "light_detector.h"
 
 // 画面悬浮小窗 (v6.12): 悬浮在 APP 内所有页面之上
 // 拖动定位 / 双击切换大(340x260)小(180x140) / 右上角×关闭
@@ -59,6 +60,7 @@ public:
 signals:
     void statusChanged(const QString &text);   // 连接页状态标签用
     void miniWindowToggled(bool on);           // 悬浮小窗开关 (mainwindow 管理悬浮窗)
+    void frameUpdated(const QPixmap &pm);      // v6.14 每解析出一帧发信号 (云台页左侧画面用)
 
 protected:
     void resizeEvent(QResizeEvent *e) override;   // 等比缩放保持 (防畸变)
@@ -116,6 +118,15 @@ private:
     QLabel *m_sensVal;
     QLabel *m_motionResultLabel;
     QString m_lastMotionText;
+
+    // v6.15 灯光/亮斑检测 (搜救场景: 废墟暗环境找灯光/手电/火光)
+    LightDetector *m_lightDetector;
+    bool m_lightOn = false;
+    QPushButton *m_btnLight;
+    QSlider *m_lightSensSlider;
+    QLabel *m_lightSensVal;
+    QLabel *m_lightResultLabel;
+    QString m_lastLightText;
 
 };
 

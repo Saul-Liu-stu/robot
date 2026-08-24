@@ -125,6 +125,7 @@ CameraWidget::CameraWidget(QWidget *parent)
 {
     m_detector = new ColorDetector(this);
     m_motionDetector = new MotionDetector(this);
+    m_lightDetector = new LightDetector(this);
     setupUi();
 }
 
@@ -446,6 +447,51 @@ void CameraWidget::setupUi()
     motL->addWidget(m_motionResultLabel);
     ctl->addWidget(motG);
 
+    // 灯光/亮斑检测 (v6.15 搜救场景: 废墟暗环境找灯光/手电/火光)
+    auto *litG = new QGroupBox; sGrp(litG, QStringLiteral("💡 灯光检测 (暗环境找亮斑)"));
+    auto *litL = new QVBoxLayout(litG); litL->setSpacing(8);
+
+    m_btnLight = mkB(QStringLiteral("💡 灯光检测 关"), C_ACC);
+    m_btnLight->setMinimumHeight(38);
+    connect(m_btnLight, &QPushButton::clicked, this, [this]() {
+        m_lightOn = !m_lightOn;
+        m_btnLight->setText(m_lightOn ? QStringLiteral("💡 灯光检测 开") : QStringLiteral("💡 灯光检测 关"));
+        m_btnLight->setStyleSheet(mkStyle(m_lightOn ? C_ORANGE : C_ACC));
+        m_lastLightText.clear();
+        if (!m_lightOn) {
+            m_lightResultLabel->setText(QStringLiteral("💡 检测未开启"));
+            m_lightResultLabel->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
+        }
+    });
+    litL->addWidget(m_btnLight);
+
+    // 灵敏度: 阈值 = max(110, 画面均值+偏移), 偏移 30~120 (小=灵敏/易误报, 大=只找强光)
+    auto *litSensRow = new QHBoxLayout; litSensRow->setSpacing(6);
+    m_lightSensVal = new QLabel(QStringLiteral("灵敏度 50"));
+    m_lightSensVal->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
+    m_lightSensSlider = new QSlider(Qt::Horizontal);
+    m_lightSensSlider->setRange(30, 120);
+    m_lightSensSlider->setValue(50);
+    m_lightSensSlider->setStyleSheet(QString(
+        "QSlider::groove:horizontal{height:6px;background:%1;border-radius:3px;}"
+        "QSlider::handle:horizontal{width:22px;height:22px;margin:-8px 0;"
+        "background:%2;border-radius:11px;}"
+        "QSlider::sub-page:horizontal{background:%2;border-radius:3px;}")
+        .arg(C_ACC, C_ORANGE));
+    connect(m_lightSensSlider, &QSlider::valueChanged, this, [this](int v) {
+        m_lightSensVal->setText(QStringLiteral("灵敏度 %1").arg(v));
+        m_lightDetector->setOffset(v);
+    });
+    litSensRow->addWidget(m_lightSensVal);
+    litSensRow->addWidget(m_lightSensSlider, 1);
+    litL->addLayout(litSensRow);
+
+    m_lightResultLabel = new QLabel(QStringLiteral("💡 检测未开启"));
+    m_lightResultLabel->setAlignment(Qt::AlignCenter);
+    m_lightResultLabel->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
+    litL->addWidget(m_lightResultLabel);
+    ctl->addWidget(litG);
+
     ctl->addStretch();
     l->addWidget(ctlSc, 2);
 }
@@ -547,8 +593,25 @@ void CameraWidget::parseMjpegFrame()
                         .arg(mr.detected ? C_RED : C_DIM));
                 }
             }
+            if (m_lightOn) {   // v6.15 灯光/亮斑检测 (亮度自适应阈值 + 连通域)
+                LightResult lr;
+                img = m_lightDetector->detect(img, lr);
+                const QString txt = lr.detected
+                    ? QStringLiteral("💡 亮斑 (%1,%2) 最亮%3 画面均值%4")
+                          .arg(lr.center.x()).arg(lr.center.y())
+                          .arg(lr.maxLum).arg((int)lr.avgLum)
+                    : QStringLiteral("💡 无亮斑 (画面均值 %1)").arg((int)lr.avgLum);
+                if (txt != m_lastLightText) {
+                    m_lastLightText = txt;
+                    m_lightResultLabel->setText(txt);
+                    m_lightResultLabel->setStyleSheet(QString(
+                        "font-size:11px;font-weight:bold;color:%1;background:transparent;")
+                        .arg(lr.detected ? C_ORANGE : C_DIM));
+                }
+            }
             m_frame = QPixmap::fromImage(img);
             rescalePixmap();   // 等比缩放, 不拉伸畸变
+            emit frameUpdated(m_frame);   // v6.14 云台页左侧画面同步显示
             if (!m_reply || m_reply->property("reported").isNull()) {
                 emit statusChanged(QStringLiteral("状态: 已连接 — 视频流中"));
                 if (m_reply) {

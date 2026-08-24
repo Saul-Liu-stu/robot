@@ -18,6 +18,8 @@ qt_add_executable(RobotBleApp
     camerawidget.h       camerawidget.cpp
     color_detector.h     color_detector.cpp
     motion_detector.h    motion_detector.cpp
+    light_detector.h     light_detector.cpp
+    gimbaldial.h         gimbaldial.cpp
     mainwindow.h         mainwindow.cpp
 )
 

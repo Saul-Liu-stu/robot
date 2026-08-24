@@ -71,6 +71,17 @@ CubeMX Generate Code 后**检查**（否则用户模块全丢，链接报 `undef
 grep -c "walk_gait\|leg_ik\|attitude_control\|motor_control" Debug/Hardware/subdir.mk
 ```
 
+### 修复 4：`Debug/Core/Src/subdir.mk` 加 iwdg.c（2026-08-23 起必查）
+
+IWDG 启用后实测 CubeMX **不会**把 iwdg.c 加进 Core 的 subdir.mk → 链接报 `undefined reference to 'MX_IWDG1_Init'`。Generate 后检查四处：
+
+```bash
+grep -n "iwdg" Debug/Core/Src/subdir.mk
+# 期望: C_SRCS / OBJS / C_DEPS / clean 四处都含 iwdg.c 对应条目
+```
+
+IWDG 配置本身（iwdg.c 内 2047 reload ≈2.05s 超时、调试冻结）与 main.c 里 `HAL_IWDG_Refresh`（USER CODE 3 区，Generate 不丢）无需处理。
+
 ---
 
 ## 三、快速验证命令

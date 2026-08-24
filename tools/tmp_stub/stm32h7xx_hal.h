@@ -13,7 +13,7 @@ typedef enum { HAL_UART_STATE_RESET = 0, HAL_UART_STATE_READY,
 extern __IO uint32_t uwTick;
 typedef struct { void *Instance; HAL_UART_StateTypeDef gState; uint32_t RxState; int dummy; } UART_HandleTypeDef;
 typedef struct { uint32_t CR1, ISR, MODER, AFR; } USART_TypeDef;
-typedef struct { int OscillatorType; int HSIState; int HSICalibrationValue; int HSEState;
+typedef struct { int OscillatorType; int HSIState; int HSICalibrationValue; int HSEState; int LSIState;
                  struct { int PLLState; int PLLSource; int PLLM; int PLLN; int PLLP; int PLLQ; int PLLR;
                           int PLLRGE; int PLLVCOSEL; int PLLFRACN; } PLL;
                  int APB1CLKDivider; int APB2CLKDivider; int SYSCLKSource; int AHBCLKDivider; } RCC_OscInitTypeDef;
@@ -24,7 +24,9 @@ typedef struct { int ClockType; int SYSCLKSource; int AHBCLKDivider; int APB1CLK
 #define PWR_FLAG_VOSRDY 0
 #define RCC_OSCILLATORTYPE_HSI 0
 #define RCC_OSCILLATORTYPE_HSE 0
+#define RCC_OSCILLATORTYPE_LSI 0
 #define RCC_OSCILLATORTYPE_PLL 0
+#define RCC_LSI_ON 0
 #define RCC_HSI_DIV1 0
 #define RCC_HSICALIBRATION_DEFAULT 0
 #define RCC_PLL_ON 0
@@ -55,6 +57,10 @@ typedef struct { void *Instance; int dummy; } SPI_HandleTypeDef;
 typedef struct { void *Instance; int dummy; } ADC_HandleTypeDef;
 typedef struct { void *Instance; int dummy; } DMA_HandleTypeDef;
 typedef struct { void *Instance; int dummy; } DCMI_HandleTypeDef;
+typedef struct { void *Instance; int Prescaler; int Window; int Reload; int dummy; } IWDG_HandleTypeDef;
+HAL_StatusTypeDef HAL_IWDG_Refresh(IWDG_HandleTypeDef *hiwdg);
+#define IWDG_PRESCALER_32 0
+#define __HAL_DBGMCU_FREEZE_IWDG1() do{}while(0)
 typedef struct { int dummy; } UART_InitTypeDef;
 typedef struct { int dummy; } I2C_InitTypeDef;
 typedef struct { int dummy; } TIM_OC_InitTypeDef;

@@ -37,6 +37,10 @@ void DriveCtrl_SetButton(uint8_t dir, int8_t spd);
 /* 急停复位 (R/B/S/T/W/E/F 等接管电机时调用): 立即停轮+回平 */
 void DriveCtrl_Reset(void);
 
+/* V模式1: 1=无倾斜补偿驱动 (倾斜平衡关闭, 平台水平由自稳层保持); D按键/Reset自动清零 */
+void DriveCtrl_SetNoTilt(uint8_t on);
+uint8_t DriveCtrl_NoTilt(void);
+
 /* 每5ms调用: 占空比斜坡 + 电机差速输出 + 倾斜状态机 + 编码器平台期检测 */
 void DriveCtrl_Update(void);
 

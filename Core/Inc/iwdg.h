@@ -1,9 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file    dcmi.h
+  * @file    iwdg.h
   * @brief   This file contains all the function prototypes for
-  *          the dcmi.c file
+  *          the iwdg.c file
   ******************************************************************************
   * @attention
   *
@@ -18,8 +18,8 @@
   */
 /* USER CODE END Header */
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __DCMI_H__
-#define __DCMI_H__
+#ifndef __IWDG_H__
+#define __IWDG_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,14 +32,13 @@ extern "C" {
 
 /* USER CODE END Includes */
 
-extern DCMI_HandleTypeDef hdcmi;
-extern DMA_HandleTypeDef hdma_dcmi;   /* 必做修复1: Generate 后手动补 (DCMI 未从 .ioc 移除前) */
+extern IWDG_HandleTypeDef hiwdg1;
 
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
 
-void MX_DCMI_Init(void);
+void MX_IWDG1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 
@@ -49,5 +48,5 @@ void MX_DCMI_Init(void);
 }
 #endif
 
-#endif /* __DCMI_H__ */
+#endif /* __IWDG_H__ */
 

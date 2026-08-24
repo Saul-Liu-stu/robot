@@ -91,6 +91,10 @@ private:
     void doConnect(const QString &address);
     bool connectRfcomm(const QString &address);
     void processBuffer();
+    // v6.14 统一写入口: 写前清残留异常, 写失败返回 false (防静默失效)
+    bool sendBytes(const QByteArray &data);
+    // v6.14 资源清理 (意外断开/重连前必须清旧 socket, 否则 RFCOMM 通道被占导致重连失败)
+    void cleanup();
 
     QBluetoothDeviceDiscoveryAgent *m_disco = nullptr;
     QBluetoothLocalDevice *m_local = nullptr;
@@ -102,6 +106,7 @@ private:
 
     QByteArray m_buffer;
     int m_frameCount = 0;
+    int m_sendFailStreak = 0;   // v6.14 连续写失败计数 (≥3 判定链路死亡, 主动断开)
 
     static const QString SPP_UUID_STR;
 };

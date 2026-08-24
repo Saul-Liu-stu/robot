@@ -43,13 +43,17 @@ static void sGrp(QGroupBox *g, const QString &t)
         "QGroupBox::title{subcontrol-origin:margin;left:10px;padding:0 4px;color:%3;}")
         .arg(MainWindow::C_TXT, MainWindow::C_ACCENT, MainWindow::C_DIM));
 }
+static QString mkStyleB(const QString &bg)
+{
+    return QString(
+        "QPushButton{border:none;border-radius:10px;padding:4px 10px;"
+        "font-size:11px;font-weight:bold;color:#fff;background:%1;}"
+        "QPushButton:disabled{background:#2a2c31;color:#5a5f68;}").arg(bg);
+}
 static QPushButton *mkB(const QString &t, const QString &bg)
 {
     auto *b = new QPushButton(t); b->setMinimumHeight(30);
-    b->setStyleSheet(QString(
-        "QPushButton{border:none;border-radius:10px;padding:4px 10px;"
-        "font-size:11px;font-weight:bold;color:#fff;background:%1;}"
-        "QPushButton:disabled{background:#2a2c31;color:#5a5f68;}").arg(bg));
+    b->setStyleSheet(mkStyleB(bg));
     return b;
 }
 
@@ -68,29 +72,60 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
             appendLog(QStringLiteral("🤝 READY — 固件就绪"), C_GREEN);
             setPoseState(QStringLiteral("上电初始"));
             setActState(QStringLiteral("校准模式"), C_ORANGE);
+            // v6.14 固件上电/看门狗复位: 云台自动回正 90/120, 同步 APP 轮盘显示
+            m_gimbalPanDeg = 90; m_gimbalTiltDeg = 120;
+            if (m_gimbalDial) m_gimbalDial->setValue(90, 120);
+            if (m_gimbalStateLabel) {
+                m_gimbalStateLabel->setText(QStringLiteral("✅ 水平 90° / 俯仰 120° (正对前方)"));
+                m_gimbalStateLabel->setStyleSheet(QString(
+                    "font-size:13px;font-weight:bold;color:%1;background:%2;border-radius:10px;padding:8px;")
+                    .arg(C_TXT, C_CARD));
+            }
         }
         else if (l.startsWith(QStringLiteral("UNK:")))
             appendLog(QStringLiteral("⚠ 固件不认识: %1").arg(l.mid(4)), C_ORANGE);
         else if (l.startsWith(QStringLiteral("CALIB"))) {
-            appendLog(QStringLiteral("⛰ 坡度标定中 (静止2s)..."), C_ORANGE);
+            // v6.12 Z = 自稳标定 (放平静止2s, 每姿态单独存; 重复按重标)
+            appendLog(QStringLiteral("⚖ 自稳标定中 (放平静止2s)..."), C_ORANGE);
             m_slopeState->setText(QStringLiteral("状态: 标定中..."));
             m_slopeState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_ORANGE));
-            setActState(QStringLiteral("坡度标定中"), C_ORANGE);
+            setActState(QStringLiteral("自稳标定中"), C_ORANGE);
         }
-        else if (l.startsWith(QStringLiteral("SLOPE:ON"))) {
-            appendLog(QStringLiteral("⛰ 坡度自适应已开启"), C_GREEN);
-            m_slopeState->setText(QStringLiteral("状态: 已开启"));
+        else if (l.startsWith(QStringLiteral("CAL:OK"))) {
+            // v6.12 标定完成: 零偏已存, 可开自稳 L:1 (V 模式1 自动跟随)
+            appendLog(QStringLiteral("⚖ 自稳标定完成 — 零偏已存, 可开自稳 L:1"), C_GREEN);
+            m_slopeState->setText(QStringLiteral("状态: 已标定"));
             m_slopeState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_GREEN));
-            setActState(QStringLiteral("坡度自适应 开"), C_GREEN);
+            setActState(QStringLiteral("站立"), C_GREEN);
         }
-        else if (l.startsWith(QStringLiteral("SLOPE:OFF"))) {
-            appendLog(QStringLiteral("⛰ 坡度自适应已关闭"), C_DIM);
-            m_slopeState->setText(QStringLiteral("状态: 关闭"));
-            m_slopeState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
-            setActState(QStringLiteral("坡度自适应 关"), C_DIM);
+        else if (l.startsWith(QStringLiteral("LV:ON"))) {
+            // v6.14 站立自稳开启
+            appendLog(QStringLiteral("🦿 站立自稳已开启 (H/K 高站姿 z 差动补偿)"), C_GREEN);
+            m_lvOn = true;
+            if (m_lvState) {
+                m_lvState->setText(QStringLiteral("状态: 已开启"));
+                m_lvState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_GREEN));
+            }
+            if (m_btnLv) m_btnLv->setText(QStringLiteral("L:0 关"));
         }
-        else if (l.startsWith(QStringLiteral("AT:OK")))
-            appendLog(QStringLiteral("⛰ 坡度参数已更新"), C_GREEN);
+        else if (l.startsWith(QStringLiteral("LV:OFF"))) {
+            appendLog(QStringLiteral("🦿 站立自稳已关闭"), C_DIM);
+            m_lvOn = false;
+            if (m_lvState) {
+                m_lvState->setText(QStringLiteral("状态: 关闭"));
+                m_lvState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
+            }
+            if (m_btnLv) m_btnLv->setText(QStringLiteral("L:1 开"));
+        }
+        else if (l.startsWith(QStringLiteral("LV:NOCAL"))) {
+            appendLog(QStringLiteral("⚠ 自稳未标定 — 先发 Z 标定当前姿态 (静止2s)"), C_ORANGE);
+            m_lvOn = false;
+            if (m_lvState) {
+                m_lvState->setText(QStringLiteral("状态: 未标定"));
+                m_lvState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_ORANGE));
+            }
+            if (m_btnLv) m_btnLv->setText(QStringLiteral("L:1 开"));
+        }
         else if (l.startsWith(QStringLiteral("IMU:ON")))
             appendLog(QStringLiteral("📡 IMU 上报已开启"), C_GREEN);
         else if (l.startsWith(QStringLiteral("IMU:OFF")))
@@ -116,15 +151,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
             setGaitEnabled(true);
         }
         else if (l.startsWith(QStringLiteral("GM:"))) {
-            // v6.13 云台回显 "GM:pan,tilt" (限幅后的实际值) → 同步两轴记录 + 当前轴显示
+            // v6.14 云台回显 "GM:pan,tilt" (固件限幅后的实际值)
+            // 拖动中 (5Hz 高频): 只更新记录值和状态文字, 不同步轮盘防抢指针, 不打日志防刷屏
             QStringList gp = l.mid(3).split(QLatin1Char(','));
             int pan = gp.value(0).trimmed().toInt();
             int tilt = gp.value(1).trimmed().toInt();
-            appendLog(QStringLiteral("🎥 云台 → 水平 %1° / 俯仰 %2°").arg(pan).arg(tilt), C_BLUE);
+            if (!m_gimbalDragging)
+                appendLog(QStringLiteral("🎥 云台 → 水平 %1° / 俯仰 %2°").arg(pan).arg(tilt), C_BLUE);
             m_gimbalPanDeg = pan;
             m_gimbalTiltDeg = tilt;
-            if (m_gimbalSlider)
-                m_gimbalSlider->setValue(m_gimbalAxis == 0 ? pan : tilt);  // valueChanged 刷新大角度显示
+            if (m_gimbalDial && !m_gimbalDragging)
+                m_gimbalDial->setValue(pan, tilt);
             if (m_gimbalStateLabel) {
                 m_gimbalStateLabel->setText(QStringLiteral("✅ 水平 %1° / 俯仰 %2° 已到位").arg(pan).arg(tilt));
                 m_gimbalStateLabel->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_GREEN));
@@ -160,9 +197,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) { setupUi();
             setActState(QStringLiteral("站立"), C_GREEN);
             setGaitEnabled(false);
         }
-        else if (l.compare(QStringLiteral("HIGH"), Qt::CaseInsensitive) == 0) {
-            appendLog(QStringLiteral("⬆ 高站姿 280mm (狗姿态)"), C_BLUE);
-            setPoseState(QStringLiteral("狗高 280"));
+        else if (l.startsWith(QStringLiteral("HIGH"), Qt::CaseInsensitive)) {
+            // v6.12 HIGH = 高站姿 280; HIGH:高度 = 正常膝低站姿 200~280 (爬陡坡)
+            int h = 280;
+            const QStringList hp = l.split(QLatin1Char(':'));
+            if (hp.size() > 1) h = hp.value(1).trimmed().toInt();
+            if (h < 280) {
+                appendLog(QStringLiteral("⬇ 低站姿 %1mm (正常膝, 站越低自稳可补偿坡度越大)").arg(h), C_BLUE);
+                setPoseState(QStringLiteral("低站姿 %1").arg(h));
+            } else {
+                appendLog(QStringLiteral("⬆ 高站姿 280mm (狗姿态)"), C_BLUE);
+                setPoseState(QStringLiteral("狗高 280"));
+            }
             setActState(QStringLiteral("站立"), C_GREEN);
             setGaitEnabled(true);
         }
@@ -301,23 +347,37 @@ void MainWindow::onBtStateChanged(BluetoothClient::State s)
         m_devAddrLabel->setText(m_lastAddr);
         m_btnReconnect->setVisible(false);
         if (m_stack->currentIndex() == 0) setPage(3);
+        m_everConnected = true;
+        m_userDisconnect = false;
+        stopAutoReconnect();
     } else {
         m_btnReconnect->setVisible(!m_lastAddr.isEmpty());
+        // v6.14 意外断开 (连过且非用户主动) → 自动重连 (固件看门狗复位后自动恢复)
+        if (m_everConnected && !m_userDisconnect && !m_lastAddr.isEmpty())
+            startAutoReconnect();
     }
     m_btnScan->setEnabled(s!=BluetoothClient::Connecting&&s!=BluetoothClient::Connected);
     m_btnConnect->setEnabled(s==BluetoothClient::Idle||s==BluetoothClient::Scanning);
     m_btnDisconnect->setEnabled(on);
     if (!on) {
         m_servoWidget->reset(); m_pidWidget->reset();
-        // 云台回默认: 两轴 90 (180°舵机居中), 选中水平轴
-        m_gimbalPanDeg = 90; m_gimbalTiltDeg = 90;
-        if (m_gimbalSlider) {
-            setGimbalAxis(0);
-            m_gimbalSlider->setValue(90);
+        // 自稳状态重置 (v6.14)
+        m_lvOn = false;
+        if (m_lvState) {
+            m_lvState->setText(QStringLiteral("状态: 关闭"));
+            m_lvState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
         }
+        if (m_btnLv) m_btnLv->setText(QStringLiteral("L:1 开"));
+        // 云台回默认: 正对前方 90/120
+        m_gimbalPanDeg = 90; m_gimbalTiltDeg = 120;
+        m_gimbalDragging = false;
+        if (m_gimbalTimer) m_gimbalTimer->stop();
+        if (m_gimbalDial) m_gimbalDial->setValue(90, 120);
         if (m_gimbalStateLabel) {
-            m_gimbalStateLabel->setText(QStringLiteral("选轴 → 拖滑块 → 点「设置」"));
-            m_gimbalStateLabel->setStyleSheet(QString("font-size:11px;color:%1;background:transparent;").arg(C_DIM));
+            m_gimbalStateLabel->setText(QStringLiteral("✅ 水平 90° / 俯仰 120° (正对前方)"));
+            m_gimbalStateLabel->setStyleSheet(QString(
+                "font-size:13px;font-weight:bold;color:%1;background:%2;border-radius:10px;padding:8px;")
+                .arg(C_TXT, C_CARD));
         }
     }
 }
@@ -429,12 +489,14 @@ void MainWindow::onConnectClicked()
     auto *c=m_devList->currentItem(); if(!c){appendLog(QStringLiteral("⚠ 选择设备"),C_ORANGE);return;}
     if(m_bt->state()==BluetoothClient::Scanning) m_bt->stopScan();
     m_lastAddr = c->data(Qt::UserRole).toString();   // v6.10 记住供重连
+    m_userDisconnect = false;   // v6.14 手动连接优先于自动重连
     m_bt->connectToAddress(m_lastAddr);
 }
 void MainWindow::onReconnectClicked()
 {
     if (m_lastAddr.isEmpty()) return;
     appendLog(QStringLiteral("↻ 重连上次设备 %1").arg(m_lastAddr), C_ORANGE);
+    m_userDisconnect = false;   // v6.14 手动连接优先于自动重连
     m_bt->connectToAddress(m_lastAddr);
 }
 
@@ -486,12 +548,48 @@ void MainWindow::onMiniCamToggled(bool on)
         m_miniCamTimer->stop();
     }
 }
-void MainWindow::onDisconnectClicked() { m_bt->disconnect(); m_servoWidget->reset(); m_pidWidget->reset(); m_motorWidget->reset(); }
+void MainWindow::onDisconnectClicked()
+{
+    m_userDisconnect = true;   // v6.14 主动断开不触发自动重连
+    m_bt->disconnect();
+    m_servoWidget->reset(); m_pidWidget->reset(); m_motorWidget->reset();
+}
+
+// v6.14 断线自动重连: 2.5s 间隔, 最多 20 次 (给固件复位/恢复留时间)
+void MainWindow::startAutoReconnect()
+{
+    if (m_lastAddr.isEmpty()) return;
+    if (!m_reconnectTimer) {
+        m_reconnectTimer = new QTimer(this);
+        m_reconnectTimer->setInterval(2500);
+        connect(m_reconnectTimer, &QTimer::timeout, this, [this]() {
+            if (m_bt->isConnected()) { stopAutoReconnect(); return; }
+            if (m_bt->state() == BluetoothClient::Connecting) return;   // 上次尝试未结束, 跳过本轮
+            if (++m_reconnectCount > 20) {
+                stopAutoReconnect();
+                appendLog(QStringLiteral("⛔ 自动重连 20 次仍失败 — 检查机器人供电/固件后手动重连"), C_RED);
+                return;
+            }
+            appendLog(QStringLiteral("↻ 自动重连第 %1 次 %2").arg(m_reconnectCount).arg(m_lastAddr), C_ORANGE);
+            m_bt->connectToAddress(m_lastAddr);
+        });
+    }
+    if (!m_reconnectTimer->isActive()) {
+        m_reconnectCount = 0;
+        m_reconnectTimer->start();
+        appendLog(QStringLiteral("🔁 连接断开, 2.5s 后自动重连 (20次上限)"), C_ORANGE);
+    }
+}
+void MainWindow::stopAutoReconnect()
+{
+    if (m_reconnectTimer) m_reconnectTimer->stop();
+    m_reconnectCount = 0;
+}
 
 // ── UI ──────────────────────────────────────────────────────
 void MainWindow::setupUi()
 {
-    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v6.13"));
+    setWindowTitle(QStringLiteral("🔧 四足机器人调试助手 v6.16"));
     resize(800, 460);
     QPalette pal; pal.setColor(QPalette::Window, QColor(C_BG)); setPalette(pal); setAutoFillBackground(true);
     auto *cw=new QWidget; cw->setStyleSheet(QString("background:%1;").arg(C_BG));
@@ -661,6 +759,7 @@ void MainWindow::setupUi()
     mkGait(QStringLiteral("U 站起"),   QStringLiteral("#10b981"), QStringLiteral("U"), 3, 0);
     mkGait(QStringLiteral("O 坐姿"),   QStringLiteral("#8b5cf6"), QStringLiteral("O"), 3, 1);
     mkGait(QStringLiteral("T 倒走"),   QStringLiteral("#0ea5e9"), QStringLiteral("T:-1"), 3, 2);
+    mkGait(QStringLiteral("H:230 蹲低"), QStringLiteral("#a78bfa"), QStringLiteral("H:230"), 3, 3);
     ctrlL->addWidget(gaitG, 2);
 
     // 中栏: 前倾修正 + 电机
@@ -703,73 +802,46 @@ void MainWindow::setupUi()
     midL->addStretch();
     ctrlL->addLayout(midL, 2);
 
-    // 坡度自适应 (轮式爬坡)
-    auto *slopeG = new QGroupBox; sGrp(slopeG, QStringLiteral("坡度自适应 (轮式爬坡)"));
+    // 站立自稳 (v6.12: Z 标定 + L:1/L:0 开关; 坡度自适应已随固件删除)
+    auto *slopeG = new QGroupBox; sGrp(slopeG, QStringLiteral("站立自稳 (H/K 高站姿, 爬陡坡用)"));
     auto *slopeGL = new QVBoxLayout(slopeG); slopeGL->setSpacing(6);
 
     auto *slopeTop = new QHBoxLayout;
-    m_slopeState = new QLabel(QStringLiteral("状态: 关闭"));
+    m_slopeState = new QLabel(QStringLiteral("标定: 未标定"));
     m_slopeState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
     slopeTop->addWidget(m_slopeState);
-    auto *btnZ = mkB(QStringLiteral("Z 开关"), C_BLUE);
+    auto *btnZ = mkB(QStringLiteral("Z 标定"), C_BLUE);
     btnZ->setFixedWidth(80);
     connect(btnZ, &QPushButton::clicked, this, [this]() {
         m_bt->sendRawText(QStringLiteral("Z"));
-        appendLog(QStringLiteral("📤 Z"), C_BLUE);
+        appendLog(QStringLiteral("📤 Z (自稳标定)"), C_BLUE);
     });
     slopeTop->addStretch();
     slopeTop->addWidget(btnZ);
     slopeGL->addLayout(slopeTop);
 
-    // Q:i:v 五参数
-    struct SlopeParamDef {
-        const char *name; int idx;
-        int rMin, rMax;       // 滑杆范围 (×scale)
-        double scale;         // 显示/发送 = 滑杆值 / scale
-        double init;
-    };
-    static const SlopeParamDef defs[5] = {
-        {"lpf_alpha 坡度低通", 0, 1, 10, 1000.0, 0.002},   // 0.001~0.010
-        {"up_thr 上坡阈值°",   1, 2, 15, 1.0,   5.0},
-        {"hyst 退出迟滞°",     2, 0, 5,  1.0,   2.0},
-        {"gain 后移量mm/°",    3, 10, 60, 10.0,  3.5},     // 1.0~6.0
-        {"shift_max 后移上限mm",4, 10, 60, 1.0,  40.0},
-    };
-    for (int i = 0; i < 5; i++) {
-        auto &row = m_slopeRows[i];
-        auto *rowL = new QVBoxLayout; rowL->setSpacing(2);
-        auto *info = new QHBoxLayout;
-        row.name = new QLabel(QString::fromUtf8(defs[i].name));
-        row.name->setStyleSheet(QString("font-size:12px;color:%1;background:transparent;").arg(C_DIM));
-        row.val = new QLabel;
-        row.val->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_TXT));
-        info->addWidget(row.name); info->addStretch(); info->addWidget(row.val);
-        rowL->addLayout(info);
+    // 自稳开关 (v6.12: L:1/L:0, 先 Z 标定; 单独 L 仍是低趴姿态)
+    auto *lvTop = new QHBoxLayout;
+    m_lvState = new QLabel(QStringLiteral("自稳: 关闭"));
+    m_lvState->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_DIM));
+    lvTop->addWidget(m_lvState);
+    lvTop->addStretch();
+    m_btnLv = mkB(QStringLiteral("L:1 开"), C_GREEN);
+    m_btnLv->setFixedWidth(80);
+    connect(m_btnLv, &QPushButton::clicked, this, [this]() {
+        const QString cmd = m_lvOn ? QStringLiteral("L:0") : QStringLiteral("L:1");
+        m_bt->sendRawText(cmd);
+        appendLog(QStringLiteral("📤 %1 (自稳)").arg(cmd), C_BLUE);
+    });
+    lvTop->addWidget(m_btnLv);
+    slopeGL->addLayout(lvTop);
 
-        auto *sl = new QHBoxLayout; sl->setSpacing(6);
-        row.slider = new QSlider(Qt::Horizontal);
-        row.slider->setRange(defs[i].rMin, defs[i].rMax);
-        row.slider->setValue((int)(defs[i].init * defs[i].scale));
-        row.slider->setStyleSheet(QString(
-            "QSlider::groove:horizontal{height:6px;background:%1;border-radius:3px;}"
-            "QSlider::handle:horizontal{width:24px;height:24px;margin:-9px 0;"
-            "background:%2;border-radius:12px;}"
-            "QSlider::sub-page:horizontal{background:%2;border-radius:3px;}")
-            .arg(C_ACCENT, C_BLUE));
-        int idx = i;
-        connect(row.slider, &QSlider::valueChanged, this, [this, idx]() {
-            double v = m_slopeRows[idx].slider->value() / defs[idx].scale;
-            m_slopeRows[idx].val->setText(QString::number(v, 'f', 3));
-        });
-        row.val->setText(QString::number(defs[i].init, 'f', 3));
-        sl->addWidget(row.slider, 1);
-        auto *send = mkB(QStringLiteral("发送"), C_BLUE);
-        send->setFixedWidth(64);
-        connect(send, &QPushButton::clicked, this, [this, idx]() { sendSlopeParam(idx); });
-        sl->addWidget(send);
-        rowL->addLayout(sl);
-        slopeGL->addLayout(rowL);
-    }
+    auto *lvHint = new QLabel(QStringLiteral(
+        "流程: 平地站姿 → Z 标定(静止2s) → L:1 开自稳 · 爬陡坡: V模式1 接近坡底 → H:230 边开边蹲 → 回平地 H 站起\n"
+        "单腿补偿上限随站高: 280≈25mm(7.5°) / 230≈75mm(23°) · 死区±1° · 行走/翻膝/收纳中不叠加"));
+    lvHint->setWordWrap(true);
+    lvHint->setStyleSheet(QString("font-size:10px;color:%1;background:transparent;").arg(C_DIM));
+    slopeGL->addWidget(lvHint);
     ctrlL->addWidget(slopeG, 2);
     m_stack->addWidget(ctrlSc);  // index 2
 
@@ -819,12 +891,27 @@ void MainWindow::setupUi()
     joyHint->setAlignment(Qt::AlignCenter);
     joyHint->setStyleSheet(QString("font-size:11px;color:%1;background:transparent;").arg(C_DIM));
     joyGL->addWidget(joyHint);
+    // v6.12 驾驶模式切换: 模式0 倾斜平衡 / 模式1 无倾斜+自稳保持 (爬陡坡轮盘)
+    m_btnVMode = mkB(QStringLiteral("模式0 倾斜平衡"), C_ACCENT);
+    m_btnVMode->setMinimumHeight(30);
+    connect(m_btnVMode, &QPushButton::clicked, this, [this]() {
+        m_vMode1 = !m_vMode1;
+        m_btnVMode->setText(m_vMode1 ? QStringLiteral("模式1 自稳保持") : QStringLiteral("模式0 倾斜平衡"));
+        m_btnVMode->setStyleSheet(mkStyleB(m_vMode1 ? C_ORANGE : C_ACCENT));
+        appendLog(m_vMode1 ? QStringLiteral("🔄 驾驶模式 → 1 (无倾斜+自稳保持, 反折膝先翻膝)")
+                           : QStringLiteral("🔄 驾驶模式 → 0 (倾斜平衡)"), C_ORANGE);
+    });
+    joyGL->addWidget(m_btnVMode);
     mainRow->addWidget(joyG, 2);
     connect(m_joy, &JoystickWidget::joystickMoved, this, [this](int sp, int st) {
-        m_bt->sendRawText(QStringLiteral("V:%1:%2").arg(sp).arg(st));  // 100ms 高频, 不刷日志
+        // v6.12 模式1 (无倾斜补偿+自稳保持): 带 :1 后缀; 模式0 倾斜平衡: 两参
+        m_bt->sendRawText(m_vMode1 ? QStringLiteral("V:%1:%2:1").arg(sp).arg(st)
+                                   : QStringLiteral("V:%1:%2").arg(sp).arg(st));  // 100ms 高频, 不刷日志
         // 1:1 映射: V 值即占空比% (协议 v6.4)
-        m_joyValLabel->setText(QStringLiteral("V: %1 : %2   占空比 %3% / %4%")
-            .arg(sp).arg(st).arg(qAbs(sp)).arg(qAbs(st)));
+        m_joyValLabel->setText(QStringLiteral("V: %1 : %2%3   占空比 %4% / %5%")
+            .arg(sp).arg(st)
+            .arg(m_vMode1 ? QStringLiteral(" : 1") : QString())
+            .arg(qAbs(sp)).arg(qAbs(st)));
         setActState(QStringLiteral("轮式驾驶"), C_BLUE);
         // 方向显示: 协议映射表 (APP 自算, 10Hz 同步刷新)
         QString d;
@@ -934,121 +1021,77 @@ void MainWindow::setupUi()
     joyL->addStretch();
     m_stack->addWidget(joySc);  // index 3
 
-    // ── 页4: 云台 (v6.13 G:水平:俯仰 0~180°, 交互完全复刻矫正页: 选轴→拖滑块→点设置) ──
+    // ── 页4: 云台 (v6.14 左摄像头画面 + 右单轮盘: 点哪云台去哪, 5Hz 实时发送) ──
     auto *gimW = new QWidget;
-    auto *gimL = new QVBoxLayout(gimW); gimL->setContentsMargins(12, 8, 12, 8); gimL->setSpacing(6);
+    auto *gimL = new QHBoxLayout(gimW); gimL->setContentsMargins(12, 8, 12, 8); gimL->setSpacing(10);
 
-    auto *gimTitle = new QLabel(QStringLiteral("云台控制 — 双轴舵机 (操作同矫正页)"));
-    gimTitle->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
-    gimL->addWidget(gimTitle);
-    auto *gimSep = new QFrame; gimSep->setFrameShape(QFrame::HLine);
-    gimSep->setStyleSheet(QStringLiteral("color:#2a2d33;")); gimSep->setFixedHeight(1);
-    gimL->addWidget(gimSep);
+    // 左: 摄像头画面 (frameUpdated 信号驱动, 等比缩放)
+    m_gimbalCamLabel = new QLabel(QStringLiteral("📷 未连接摄像头\n\n在连接页「WiFi 摄像头」点连接"));
+    m_gimbalCamLabel->setAlignment(Qt::AlignCenter);
+    m_gimbalCamLabel->setMinimumSize(280, 220);
+    m_gimbalCamLabel->setStyleSheet(QString(
+        "font-size:11px;color:%1;background:%2;border:1px solid %3;border-radius:12px;")
+        .arg(C_DIM, C_BG, C_ACCENT));
+    gimL->addWidget(m_gimbalCamLabel, 1);
 
-    auto *gimBody = new QHBoxLayout; gimBody->setSpacing(10);
+    // 右: 状态卡 + 轮盘 + 预设 + 说明
+    auto *gimRight = new QVBoxLayout; gimRight->setSpacing(6);
 
-    // 左栏: 轴选择 (同矫正页舵机选择)
-    auto *gimLeft = new QVBoxLayout; gimLeft->setSpacing(4);
-    m_gimbalAxisLabel = new QLabel(QStringLiteral("当前: 水平 pan"));
-    m_gimbalAxisLabel->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
-    gimLeft->addWidget(m_gimbalAxisLabel);
-    const char *axisNames[2] = {"水平 pan", "俯仰 tilt"};
-    for (int i = 0; i < 2; i++) {
-        m_gimbalAxisBtns[i] = new QPushButton(QString::fromUtf8(axisNames[i]));
-        m_gimbalAxisBtns[i]->setMinimumSize(120, 40);
-        int ax = i;
-        connect(m_gimbalAxisBtns[i], &QPushButton::clicked, this, [this, ax]() { setGimbalAxis(ax); });
-        gimLeft->addWidget(m_gimbalAxisBtns[i]);
-    }
-    gimLeft->addSpacing(8);
-    // 居中预设 (180°舵机居中 90/90)
-    auto *btnCenter = mkB(QStringLiteral("🎯 居中 90/90"), C_ORANGE);
-    btnCenter->setMinimumHeight(36);
-    connect(btnCenter, &QPushButton::clicked, this, [this]() {
-        m_gimbalPanDeg = 90; m_gimbalTiltDeg = 90;
-        m_gimbalSlider->setValue(90);
-        sendGimbal(90, 90);
-    });
-    gimLeft->addWidget(btnCenter);
-    gimLeft->addStretch();
-    gimBody->addLayout(gimLeft, 2);
-
-    // 竖分隔
-    auto *gimVsep = new QFrame; gimVsep->setFrameShape(QFrame::VLine);
-    gimVsep->setStyleSheet(QStringLiteral("color:#2a2d33;")); gimVsep->setFixedWidth(1);
-    gimBody->addWidget(gimVsep);
-
-    // 右栏: 角度控制 (同矫正页: 大数字+滑杆+刻度+快捷调整+设置)
-    auto *gimRight = new QVBoxLayout; gimRight->setSpacing(4);
-    m_gimbalAngleLabel = new QLabel(QStringLiteral("90°"));
-    m_gimbalAngleLabel->setAlignment(Qt::AlignCenter);
-    m_gimbalAngleLabel->setStyleSheet(QString("font-size:30px;font-weight:bold;color:%1;background:transparent;").arg(C_TXT));
-    gimRight->addWidget(m_gimbalAngleLabel);
-
-    m_gimbalSlider = new QSlider(Qt::Horizontal);
-    m_gimbalSlider->setRange(0, 180);
-    m_gimbalSlider->setValue(90);
-    m_gimbalSlider->setStyleSheet(QString(
-        "QSlider::groove:horizontal{height:8px;background:%1;border-radius:4px;}"
-        "QSlider::handle:horizontal{width:32px;height:32px;margin:-12px 0;"
-        "background:%2;border-radius:16px;}"
-        "QSlider::sub-page:horizontal{background:%2;border-radius:4px;}")
-        .arg(C_ACCENT, C_BLUE));
-    connect(m_gimbalSlider, &QSlider::valueChanged, this, [this](int v) {
-        m_gimbalAngleLabel->setText(QStringLiteral("%1°").arg(v));
-        if (m_gimbalAxis == 0) m_gimbalPanDeg = v; else m_gimbalTiltDeg = v;  // 拖动即记录
-    });
-    gimRight->addWidget(m_gimbalSlider);
-
-    // 刻度 (180°舵机: 0/45/90/135/180)
-    auto *gimTicks = new QHBoxLayout;
-    for (int v : {0, 45, 90, 135, 180}) {
-        auto *lb = new QLabel(QString::number(v));
-        lb->setStyleSheet(QString("font-size:9px;color:%1;background:transparent;").arg(C_DIM));
-        lb->setAlignment(v == 0 ? Qt::AlignLeft : v == 180 ? Qt::AlignRight : Qt::AlignCenter);
-        gimTicks->addWidget(lb);
-    }
-    gimRight->addLayout(gimTicks);
-
-    // 快捷调整 + 设置 (同矫正页)
-    auto *gimAdj = new QHBoxLayout; gimAdj->setSpacing(4);
-    auto mkGimAdj = [&](const QString &t, int d) {
-        auto *b = mkB(t, C_ACCENT);
-        b->setFixedWidth(44); b->setMinimumHeight(30);
-        connect(b, &QPushButton::clicked, this, [this, d]() {
-            m_gimbalSlider->setValue(qBound(0, m_gimbalSlider->value() + d, 180));
-        });
-        gimAdj->addWidget(b);
-    };
-    mkGimAdj(QStringLiteral("-10"), -10);
-    mkGimAdj(QStringLiteral("-1"), -1);
-    auto *btnGimSet = mkB(QStringLiteral("设置"), C_BLUE);
-    btnGimSet->setMinimumHeight(28);
-    connect(btnGimSet, &QPushButton::clicked, this, [this]() {
-        sendGimbal(m_gimbalPanDeg, m_gimbalTiltDeg);
-        m_gimbalStateLabel->setText(QStringLiteral("📤 已发送 G:%1:%2 — 等待回显...").arg(m_gimbalPanDeg).arg(m_gimbalTiltDeg));
-        m_gimbalStateLabel->setStyleSheet(QString("font-size:11px;font-weight:bold;color:%1;background:transparent;").arg(C_BLUE));
-    });
-    gimAdj->addWidget(btnGimSet, 1);
-    mkGimAdj(QStringLiteral("+1"), 1);
-    mkGimAdj(QStringLiteral("+10"), 10);
-    gimRight->addLayout(gimAdj);
-
-    // 状态提示 (回显驱动)
-    m_gimbalStateLabel = new QLabel(QStringLiteral("选轴 → 拖滑块 → 点「设置」"));
+    // 状态卡 (GM 回显驱动)
+    m_gimbalStateLabel = new QLabel(QStringLiteral("✅ 水平 90° / 俯仰 120° (正对前方)"));
     m_gimbalStateLabel->setAlignment(Qt::AlignCenter);
-    m_gimbalStateLabel->setStyleSheet(QString("font-size:11px;color:%1;background:transparent;").arg(C_DIM));
+    m_gimbalStateLabel->setStyleSheet(QString(
+        "font-size:13px;font-weight:bold;color:%1;background:%2;border-radius:10px;padding:8px;")
+        .arg(C_TXT, C_CARD));
     gimRight->addWidget(m_gimbalStateLabel);
 
-    auto *gimHint = new QLabel(QStringLiteral("0~180° 超出限幅 · 分辨率约9°/档 · 任何模式可用 · G 不带冒号仍是站姿"));
-    gimHint->setAlignment(Qt::AlignCenter);
-    gimHint->setStyleSheet(QString("font-size:10px;color:%1;background:transparent;").arg(C_DIM));
-    gimRight->addWidget(gimHint);
-    gimRight->addStretch();
-    gimBody->addLayout(gimRight, 3);
+    // 单轮盘: 触摸点相对圆心 → 右拨=往右 / 下拨=往下 (盘内四向标记)
+    auto *dialRow = new QHBoxLayout;
+    dialRow->addStretch();
+    m_gimbalDial = new GimbalDial;
+    dialRow->addWidget(m_gimbalDial, 0, Qt::AlignCenter);
+    dialRow->addStretch();
+    gimRight->addLayout(dialRow, 1);
 
-    gimL->addLayout(gimBody, 1);
-    setGimbalAxis(0);   // 初始选中水平, 同步高亮
+    // 拖动 5Hz 节流发送 (v6.14 从10Hz降到5Hz: 减半RFCOMM写频率, 云台舵机9°/档响应慢, 200ms足够跟手; quiet 不打日志)
+    m_gimbalTimer = new QTimer(this);
+    m_gimbalTimer->setInterval(200);
+    connect(m_gimbalTimer, &QTimer::timeout, this, [this]() {
+        if (m_gimbalDragging)
+            sendGimbal(m_gimbalPanDeg, m_gimbalTiltDeg, true);
+    });
+    connect(m_gimbalDial, &GimbalDial::dragStarted, this, [this]() {
+        m_gimbalDragging = true;
+        m_gimbalTimer->start();
+    });
+    connect(m_gimbalDial, &GimbalDial::valuesChanged, this, [this](int pan, int tilt) {
+        m_gimbalPanDeg = pan;
+        m_gimbalTiltDeg = tilt;
+        m_gimbalStateLabel->setText(QStringLiteral("🎯 水平 %1° / 俯仰 %2°").arg(pan).arg(tilt));
+    });
+    connect(m_gimbalDial, &GimbalDial::dragEnded, this, [this](int, int) {
+        m_gimbalDragging = false;
+        m_gimbalTimer->stop();
+        sendGimbal(m_gimbalPanDeg, m_gimbalTiltDeg);   // 松手发最终值 (带日志)
+    });
+
+    // 底部: 正对前方预设 + 俯仰自稳开关 + 说明
+    auto *gimBot = new QHBoxLayout; gimBot->setSpacing(8);
+    auto *btnFront = mkB(QStringLiteral("🎯 正对前方 90/120"), C_ORANGE);
+    btnFront->setMinimumHeight(34);
+    connect(btnFront, &QPushButton::clicked, this, [this]() {
+        m_gimbalPanDeg = 90; m_gimbalTiltDeg = 120;
+        m_gimbalDial->setValue(90, 120);
+        sendGimbal(90, 120);
+    });
+    gimBot->addWidget(btnFront);
+    auto *gimHint = new QLabel(QStringLiteral(
+        "点哪云台去哪 (5Hz) · 右拨=往右 下拨=往下 · 松手停住不回中 · 俯仰限位75° · 分辨率9°/档"));
+    gimHint->setWordWrap(true);
+    gimHint->setStyleSheet(QString("font-size:10px;color:%1;background:transparent;").arg(C_DIM));
+    gimBot->addWidget(gimHint, 1);
+    gimRight->addLayout(gimBot);
+    gimL->addLayout(gimRight, 1);
     m_stack->addWidget(gimW);  // index 4
 
     // ── 页5: 图传 (v6.12 WiFi MJPEG, 蓝牙与 WiFi 独立并行) ──
@@ -1064,6 +1107,12 @@ void MainWindow::setupUi()
         m_btnCamDisconnect->setEnabled(m_cameraWidget->isStreaming());
     });
     connect(m_cameraWidget, &CameraWidget::miniWindowToggled, this, &MainWindow::onMiniCamToggled);
+    // v6.14 云台页左侧画面: 流帧信号驱动 (仅云台页可见时更新, 省CPU)
+    connect(m_cameraWidget, &CameraWidget::frameUpdated, this, [this](const QPixmap &pm) {
+        if (m_gimbalCamLabel && m_stack->currentIndex() == 4)
+            m_gimbalCamLabel->setPixmap(pm.scaled(m_gimbalCamLabel->size(),
+                                                  Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
     m_stack->addWidget(m_cameraWidget);  // index 5
 
     // 画面悬浮小窗: parent=中央窗口, 浮于所有页面之上, 可拖动/双击缩放
@@ -1078,38 +1127,29 @@ void MainWindow::setupUi()
     });
 
     setPage(0);
-    appendLog(QStringLiteral("🚀 调试助手 v6.13 已启动 — 横屏界面"));
+    appendLog(QStringLiteral("🚀 调试助手 v6.16 已启动 — 横屏界面"));
 }
 
-// v6.13 云台: 发 G:pan:tilt (始终两轴完整, 固件省略俯仰时缺省135而非保持)
-void MainWindow::sendGimbal(int pan, int tilt)
+// v6.14 云台: 发 G:pan:tilt (始终两轴完整; quiet=拖动 5Hz 高频不打日志)
+void MainWindow::sendGimbal(int pan, int tilt, bool quiet)
 {
     m_bt->sendRawText(QStringLiteral("G:%1:%2").arg(pan).arg(tilt));
-    appendLog(QStringLiteral("📤 G:%1:%2 (云台)").arg(pan).arg(tilt), C_BLUE);
-}
-
-// 云台切轴: 高亮按钮 + 滑杆/大数字显示切到该轴记录值 (复刻矫正页舵机切换)
-void MainWindow::setGimbalAxis(int axis)
-{
-    m_gimbalAxis = axis;
-    for (int i = 0; i < 2; i++) {
-        const bool cur = (i == axis);
-        m_gimbalAxisBtns[i]->setStyleSheet(QString(
-            "QPushButton{font-size:12px;font-weight:bold;color:%1;background:%2;"
-            "border:2px solid %3;border-radius:12px;}")
-            .arg(cur ? C_TXT : C_DIM,
-                 cur ? C_BLUE : C_BG,
-                 cur ? C_BLUE : QStringLiteral("#3a3f47")));
-    }
-    m_gimbalAxisLabel->setText(QStringLiteral("当前: %1")
-        .arg(axis == 0 ? QStringLiteral("水平 pan") : QStringLiteral("俯仰 tilt")));
-    if (m_gimbalSlider)
-        m_gimbalSlider->setValue(axis == 0 ? m_gimbalPanDeg : m_gimbalTiltDeg);
+    if (!quiet)
+        appendLog(QStringLiteral("📤 G:%1:%2 (云台)").arg(pan).arg(tilt), C_BLUE);
 }
 
 void MainWindow::setPage(int idx)
 {
     m_stack->setCurrentIndex(idx);
+    // 切到云台页: 立即拉一帧最新画面 (流帧信号只在本页时更新)
+    if (idx == 4 && m_cameraWidget && m_gimbalCamLabel) {
+        const QPixmap pm = m_cameraWidget->currentFrame();
+        if (pm.isNull())
+            m_gimbalCamLabel->setText(QStringLiteral("📷 未连接摄像头\n\n在连接页「WiFi 摄像头」点连接"));
+        else
+            m_gimbalCamLabel->setPixmap(pm.scaled(m_gimbalCamLabel->size(),
+                                                  Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    }
     for (int i = 0; i < 6; i++) {
         bool cur = (i == idx);
         m_tabBtns[i]->setStyleSheet(QString(
@@ -1120,11 +1160,4 @@ void MainWindow::setPage(int idx)
     }
 }
 
-void MainWindow::sendSlopeParam(int idx)
-{
-    struct Def { double scale; };
-    static const double scales[5] = { 1000.0, 1.0, 1.0, 10.0, 1.0 };
-    double v = m_slopeRows[idx].slider->value() / scales[idx];
-    m_bt->sendRawText(QStringLiteral("Q:%1:%2").arg(idx).arg(v, 0, 'g', 4));
-    appendLog(QStringLiteral("📤 Q:%1:%2").arg(idx).arg(v, 0, 'g', 4), C_BLUE);
-}
+// v6.12 坡度参数 (Q:i:v) 已随固件删除, 相关能力由站立自稳 + V模式1 覆盖
