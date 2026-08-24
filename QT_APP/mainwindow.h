@@ -78,16 +78,21 @@ private:
     void setDirState(const QString &dir, const QString &color = QString());
     void setGaitEnabled(bool on);
 
-    // 左侧竖栏导航 (6 页: 连接/矫正/运动/遥控/云台/图传)
+    // 左侧竖栏导航 (5 页: 连接/矫正/运动/遥控/图传; 云台并入遥控页 v6.17)
     QStackedWidget *m_stack;
-    QPushButton *m_tabBtns[6];
-    CameraWidget *m_cameraWidget = nullptr;   // v6.12 第6页 WiFi 图传
+    QPushButton *m_tabBtns[5];
+    CameraWidget *m_cameraWidget = nullptr;   // v6.12 第5页 WiFi 图传
     void setPage(int idx);
 
-    // v6.14 云台操作页 (G:水平:俯仰, 单轮盘双轴拖动 10Hz 实时发送, 回显 GM:pan,tilt)
-    QLabel *m_gimbalStateLabel = nullptr;   // 状态卡 (回显驱动)
+    // v6.18 W 越障抬腿重心补偿 (W:毫米, 0~40 默认15, 回显 WCOM:毫米)
+    QSlider *m_wcomSlider = nullptr;
+    QLabel *m_wcomVal = nullptr;
+    int m_wcom = 15;   // 当前补偿值 (回显同步)
+
+    // v6.17 云台轮盘 (位于遥控页右栏: 单盘双轴拖动 5Hz 实时发送, 回显 GM:pan,tilt)
+    QLabel *m_gimbalStateLabel = nullptr;   // 状态卡 (回显驱动, 在视频下方)
     GimbalDial *m_gimbalDial = nullptr;     // 单盘: 点哪云台去哪 (右=往右 下=往下)
-    QLabel *m_gimbalCamLabel = nullptr;     // 左侧摄像头画面 (frameUpdated 信号驱动)
+    QLabel *m_joyCamLabel = nullptr;        // 遥控页中间栏视频 (frameUpdated 信号驱动)
     QTimer *m_gimbalTimer = nullptr;        // 拖动中 5Hz 节流发送
     int m_gimbalPanDeg = 90, m_gimbalTiltDeg = 120;   // 两轴记录值 (上电正对前方 90/120)
     bool m_gimbalDragging = false;          // 拖动中: 回显不同步轮盘 (防抢游标)

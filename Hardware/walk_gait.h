@@ -64,4 +64,7 @@ void WalkGait_FootTargetLat(uint8_t leg, float t, float d_signed, int dir,
  */
 void WalkGait_FootTarget(uint8_t leg, float t, float d_signed, walk_vec3_t *out);
 
+/* 该腿当前是否摆动相 (与 FootTarget 同口径, W原地抬腿自稳用) */
+uint8_t WalkGait_IsSwing(uint8_t leg, float t);
+
 #endif /* INC_WALK_GAIT_H_ */

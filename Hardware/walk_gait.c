@@ -69,6 +69,13 @@ void WalkGait_FootTarget(uint8_t leg, float t, float d_signed, walk_vec3_t *out)
     out->y = d_signed - ((g_shift_mode == SHIFT_IK) ? WalkGait_BodyShiftY(t) : 0.0f);
 }
 
+uint8_t WalkGait_IsSwing(uint8_t leg, float t)
+{
+    float phi = t / g_walk_params.period + PHASE_TROT[leg & 3];
+    phi = phi - floorf(phi);
+    return (phi >= g_walk_params.duty) ? 1u : 0u;
+}
+
 /*
  * 横移走 (螃蟹步): 与 trot 同结构, 扫步从 x 换到 y。
  * step_len 复用为横移步宽, step_h 复用为横移抬腿高度。

@@ -31,8 +31,10 @@ uint8_t AttCtrl_LevelToggle(void);
 /* L:1 开关状态 (主循环拼 active 用; V模式1 无倾斜驱动时自稳自动跟随) */
 uint8_t AttCtrl_LevelEnabled(void);
 
-/* 每100ms调用: 输出四腿 z 补偿(mm, ±1°死区, 上限按当前站高动态算: 304.6−stand_h)。
- * active 由主循环判定 (站立静止且[L:1开启 或 无倾斜驱动模式]), 不满足输出全0 */
-void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active, float dz[4]);
+/* 每50/100ms调用: 输出四腿 z 补偿(mm, 死区±1°(fast 0.5°), 上限按站高动态算: 304.6−stand_h)。
+ * active 由主循环判定 (站立静止/V模式1无倾斜驱动/W原地抬腿), 不满足输出全0;
+ * fast=1 用快速低通 (W原地抬腿防翘板, 50ms 调用)。 */
+void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active,
+                         uint8_t fast, float dz[4]);
 
 #endif /* INC_ATTITUDE_CONTROL_H_ */

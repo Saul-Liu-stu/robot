@@ -92,6 +92,11 @@ static uint8_t  g_calib_pending = 0;
 /* 站立自稳: L:1/L:0 开关, 10Hz 更新四腿z补偿 (仅H/K高站姿, Z标定后可用) */
 static float    g_lv_dz[4] = {0, 0, 0, 0};
 static uint32_t g_lv_last  = 0;
+static uint8_t  g_lv_act   = 0;   /* 自稳激活状态 (10Hz块更新, 行走循环消费) */
+
+/* W原地抬腿重心左移补偿 (mm): 机身右侧偏重 → 右倾+右转, 足端右移=身体左移
+ * W:毫米 命令在线调 (默认15) */
+static float    g_w_com = 15.0f;
 
 /* IMU 上报: I 命令开关, 10Hz 固定频率 */
 static uint8_t  g_imu_stream = 0;
@@ -480,13 +485,22 @@ int main(void)
                 g_calib_pending = 0;
                 bluetooth_send("CAL:OK\r\n");  /* 标定完成: 自稳零偏已存 */
             }
-            /* 站立自稳: 10Hz 更新四腿z补偿 (站立静止 或 V模式1无倾斜驱动 时喂活, 否则清零) */
-            if ((uint32_t)(uwTick - g_lv_last) >= 100u) {
-                g_lv_last = uwTick;
-                uint8_t lv_act = (g_mode == MODE_STAND) && !g_park &&
-                                 !g_rise && !g_flip_on && !g_sit &&
-                                 (AttCtrl_LevelEnabled() || DriveCtrl_NoTilt());
-                AttCtrl_LevelUpdate(pitch, ia->roll, g_walk_params.stand_h, lv_act, g_lv_dz);
+            /* 站立自稳: 更新四腿z补偿
+             * 激活: 站立静止 / V模式1无倾斜驱动 / W原地抬腿(防对角支撑翘板)
+             * W 用 50ms 快拍 + 快速低通 (翘板修正要快); 其余 100ms */
+            {
+                uint8_t lv_stand = (g_mode == MODE_STAND) && !g_park && !g_rise &&
+                                   !g_flip_on && !g_sit &&
+                                   (AttCtrl_LevelEnabled() || DriveCtrl_NoTilt());
+                uint8_t lv_w = (g_mode == MODE_TROT) && !g_gait_lat &&
+                               g_walk_params.step_len == 0.0f &&
+                               (AttCtrl_LevelEnabled() || DriveCtrl_NoTilt());
+                g_lv_act = lv_stand || lv_w;
+                if ((uint32_t)(uwTick - g_lv_last) >= (lv_w ? 50u : 100u)) {
+                    g_lv_last = uwTick;
+                    AttCtrl_LevelUpdate(pitch, ia->roll, g_walk_params.stand_h,
+                                        g_lv_act, lv_w, g_lv_dz);
+                }
             }
         }
 
@@ -500,7 +514,7 @@ int main(void)
             float rate = (g_park || g_rise) ? 0.008f
                        : ((g_mode == MODE_STAND)
                           ? ((g_rise_slow && !g_flip_on) ? 0.04f : 0.12f)
-                          : 0.20f);
+                          : ((g_walk_params.step_len == 0.0f) ? 0.40f : 0.20f));  /* W原地抬腿跟随更快 */
             uint16_t angles[12];
 
             for (uint8_t leg = 0; leg < 4; leg++) {
@@ -532,8 +546,6 @@ int main(void)
                             if (g_flip_post == 1)      g_walk_params.stand_h = STAND_H_L_FRONT;
                             else if (g_flip_post == 2) g_walk_params.stand_h = STAND_H_HIGH;
                             else if (g_flip_post == 3) {
-                                for (int i = 0; i < 4; i++)
-                                    Motor_Set((uint8_t)i, 30, 1);
                                 g_walk_t0 = uwTick;
                                 g_mode = MODE_TROT;
                             }
@@ -597,8 +609,16 @@ int main(void)
                     walk_vec3_t ft;
                     if (g_gait_lat)   /* 横移走: 扫步在 y 方向 (螃蟹步, 抬腿+横扫) */
                         WalkGait_FootTargetLat(leg, t, d_leg, g_lat_dir, &ft);
-                    else
+                    else {
                         WalkGait_FootTarget(leg, t, d_leg, &ft);
+                        if (g_walk_params.step_len == 0.0f) {
+                            /* W原地抬腿: 足端整体右移=身体左移, 重心摆回对角支撑线上
+                             * (右偏重→右倾+右转的根治; 自稳只做残余小修正) */
+                            ft.y += g_w_com;
+                            if (g_lv_act && !WalkGait_IsSwing(leg, t))
+                                ft.z += g_lv_dz[leg];   /* 支撑腿z补偿 */
+                        }
+                    }
                     LegIK_SolveServo(leg, ft.x, ft.y, ft.z, deg);
                 }
 
@@ -826,29 +846,43 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send(msg);
             }
             else if (f == 'W' || f == 'w') {
-                /* 越障模式: 四轮30%前进 + 高站姿对角交替抬腿 (抬起→前伸→落下→回收) */
-                g_flip_on = 0; g_flip_start = 0;
-                DriveCtrl_Reset();
-                g_booted = 0;
-                g_shift_mode = SHIFT_OFF;              /* 无重心横移 */
-                g_gait_lat = 0;
-                g_walk_params.stand_h = STAND_H_HIGH;  /* 高站姿: 抬腿明显 */
-                g_walk_params.step_h   = 70.0f;        /* 抬腿 70mm (RL小腿余量8.9°, 极限88mm) */
-                g_walk_params.step_len = 50.0f;        /* 摆动相前伸50mm, 支撑相回收推身体前进 */
-                if (g_front_rev || g_rear_rev) {
-                    /* 反折分支抬70mm会钳小腿: 先翻膝回正常再开走 */
-                    g_flip_mask = (g_front_rev ? 1 : 0) | (g_rear_rev ? 2 : 0);
-                    g_flip_revf = 0;
-                    g_flip_revr = 0;
-                    g_flip_post = 3;
-                    g_flip_start = uwTick + FLIP_SETTLE_MS;
-                } else {
-                    for (int i = 0; i < 4; i++)
-                        Motor_Set((uint8_t)i, 30, 1);
-                    g_walk_t0 = uwTick;
-                    g_mode = MODE_TROT;
+                /* 越障模式: 原地对角抬腿 50mm (不动轮, 前进由 V 无倾斜轮盘控制)
+                 * 自稳自动跟随 (需Z标定) + 重心左移补偿 (W:毫米 在线调, 默认15)
+                 * W 运行中发 W:毫米 只改补偿量: 不重置相位、不停轮 (APP 滑块实时调) */
+                uint8_t w_tune = 0;
+                if (g_line_buf[1] == ':') {
+                    const char *wp = g_line_buf + 2;
+                    int wv = s_parse_num(&wp);
+                    if (wv >= -40 && wv <= 40) g_w_com = (float)wv;
+                    snprintf(msg, sizeof(msg), "WCOM:%d\r\n", (int)g_w_com);
+                    bluetooth_send(msg);
+                    w_tune = (g_mode == MODE_TROT &&
+                              g_walk_params.step_len == 0.0f &&
+                              !g_flip_on && !g_flip_start);
                 }
-                bluetooth_send("CLIMB\r\n");
+                if (!w_tune) {
+                    g_flip_on = 0; g_flip_start = 0;
+                    DriveCtrl_Reset();
+                    DriveCtrl_SetNoTilt(1);
+                    g_booted = 0;
+                    g_shift_mode = SHIFT_OFF;              /* 无重心横移 */
+                    g_gait_lat = 0;
+                    g_walk_params.stand_h = STAND_H_HIGH;  /* 高站姿: 抬腿明显 */
+                    g_walk_params.step_h   = 50.0f;        /* 抬腿 50mm: 70mm 时 RR大腿266°/RL小腿261° 贴270极限抬不动 */
+                    g_walk_params.step_len = 0.0f;         /* 原地抬腿 (前进交给轮盘) */
+                    if (g_front_rev || g_rear_rev) {
+                        /* 反折分支抬70mm会钳小腿: 先翻膝回正常再开走 */
+                        g_flip_mask = (g_front_rev ? 1 : 0) | (g_rear_rev ? 2 : 0);
+                        g_flip_revf = 0;
+                        g_flip_revr = 0;
+                        g_flip_post = 3;
+                        g_flip_start = uwTick + FLIP_SETTLE_MS;
+                    } else {
+                        g_walk_t0 = uwTick;
+                        g_mode = MODE_TROT;
+                    }
+                    bluetooth_send("CLIMB\r\n");
+                }
             }
             else if (f == 'A' || f == 'a') {
                 if (g_mode != MODE_STEP) {   /* 首次按A: 进入单步模式, 相位0 */
@@ -924,11 +958,15 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 bluetooth_send("KNEE\r\n");
             }
             else if ((f == 'L' || f == 'l') && g_line_buf[1] == ':') {
-                /* L:1/L:0 站立自稳开关 (H/K高站姿, 先Z标定; 单独L仍是低趴姿态) */
+                /* L:1/L:0 站立自稳开关 (H/K高站姿, 先Z标定; 单独L仍是低趴姿态)
+                 * L:0 为总开关: 同时清 W/V模式1 的自稳跟随残留 (NoTilt 标志) */
                 uint8_t r = AttCtrl_LevelToggle();
                 if (r == 2)      bluetooth_send("LV:NOCAL\r\n");
                 else if (r == 0) bluetooth_send("LV:ON\r\n");
-                else             bluetooth_send("LV:OFF\r\n");
+                else {
+                    DriveCtrl_SetNoTilt(0);
+                    bluetooth_send("LV:OFF\r\n");
+                }
             }
             else if (f == 'L' || f == 'l') {
                 /* 低趴 240: 前腿反折, 后腿正常 */

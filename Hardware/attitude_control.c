@@ -12,6 +12,8 @@
 #define LV_HALF_BW 90.0f   /* 左右髋距半宽 mm (与 leg_ik.h BODY_BW=180 一致) */
 #define LV_Z_ROOM_BASE 304.6f  /* 伸腿上限基准: 直腿点足端z(309.6@x=15) − 5mm安全余量 */
 #define LV_DEAD     1.0f   /* 死区 (deg): ±1°内不响应 (实测反馈"太敏感", 软死区无阶跃) */
+#define LV_DEAD_FAST 0.5f  /* W原地抬腿快速模式死区: 减半, 翘板修正要快 */
+#define LV_LPF_FAST 0.50f  /* W快速低通 (50ms调用 → 约0.1s时间常数; 站立模式仍0.15@100ms) */
 
 #define POSE_NUM    5       /* 姿态槽位: H/K/L/M/P */
 #define CALIB_N     400     /* 400 × 5ms = 2 秒标定采样 */
@@ -82,28 +84,33 @@ uint8_t AttCtrl_LevelToggle(void)
 
 uint8_t AttCtrl_LevelEnabled(void) { return s_lv_en; }
 
-void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active, float dz[4])
+void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active,
+                         uint8_t fast, float dz[4])
 {
     for (int i = 0; i < 4; i++) dz[i] = 0.0f;
-    /* 仅 active(主循环判定: 站立静止+开关/无倾斜驱动) + 已标定 + H/K高站姿 时输出 */
+    /* 仅 active(主循环判定) + 已标定 + H/K高站姿 时输出 */
     if (!active || !s_calib_done[s_pose] || s_pose > 1) {
         s_lp_p = 0.0f; s_lp_r = 0.0f;   /* 不输出时清低通, 重新激活从0平滑爬升 */
         return;
     }
+    /* fast=W原地抬腿: 快速低通+减半死区 (对角支撑翘板修正要快) */
+    float alpha = fast ? LV_LPF_FAST : LV_LPF;
+    float dead  = fast ? LV_DEAD_FAST : LV_DEAD;
+
     /* 相对零偏的低通角度 (前倾为正 / 右倾为正) */
     float flat_p = pitch - s_offset[s_pose];
     float flat_r = roll  - s_roffset[s_pose];
-    s_lp_p += LV_LPF * (flat_p - s_lp_p);
-    s_lp_r += LV_LPF * (flat_r - s_lp_r);
+    s_lp_p += alpha * (flat_p - s_lp_p);
+    s_lp_r += alpha * (flat_r - s_lp_r);
 
-    /* 死区 ±1°: 微小晃动不响应 (软死区, 无阶跃) */
+    /* 死区: 微小晃动不响应 (软死区, 无阶跃) */
     float dp = s_lp_p, dr = s_lp_r;
-    if (dp >  LV_DEAD)      dp -= LV_DEAD;
-    else if (dp < -LV_DEAD) dp += LV_DEAD;
-    else                    dp = 0.0f;
-    if (dr >  LV_DEAD)      dr -= LV_DEAD;
-    else if (dr < -LV_DEAD) dr += LV_DEAD;
-    else                    dr = 0.0f;
+    if (dp >  dead)      dp -= dead;
+    else if (dp < -dead) dp += dead;
+    else                 dp = 0.0f;
+    if (dr >  dead)      dr -= dead;
+    else if (dr < -dead) dr += dead;
+    else                 dr = 0.0f;
 
     /* 往哪边倾哪边腿伸长撑回水平: 前倾→前腿伸/后腿收; 右倾→右腿伸/左腿收 */
     float pc = dp * 0.0174533f * LV_HALF_BL;
