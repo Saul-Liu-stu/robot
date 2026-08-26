@@ -34,12 +34,20 @@ void DriveCtrl_SetCmd(int8_t speed, int8_t steer);
  * 固定倾斜全程保持, 只有停止(S)才回平 (与 V 的到速回平行为不同) */
 void DriveCtrl_SetButton(uint8_t dir, int8_t spd);
 
+/* D模式1 (新按键页): 无倾斜补偿, 前进/后退基准速度, 转向 25±5 (20/30 小差速)
+ * 自稳不自动开: 跟随全局 L:1 开关 */
+void DriveCtrl_SetButtonFlat(uint8_t dir, int8_t spd);
+
 /* 急停复位 (R/B/S/T/W/E/F 等接管电机时调用): 立即停轮+回平 */
 void DriveCtrl_Reset(void);
 
 /* V模式1: 1=无倾斜补偿驱动 (倾斜平衡关闭, 平台水平由自稳层保持); D按键/Reset自动清零 */
 void DriveCtrl_SetNoTilt(uint8_t on);
 uint8_t DriveCtrl_NoTilt(void);
+
+/* 自稳自动跟随: 1=无需L:1自稳即生效 (V模式1/W); 0=自稳只跟L:1 (D模式1) */
+void DriveCtrl_SetLevelAuto(uint8_t on);
+uint8_t DriveCtrl_LevelAuto(void);
 
 /* 每5ms调用: 占空比斜坡 + 电机差速输出 + 倾斜状态机 + 编码器平台期检测 */
 void DriveCtrl_Update(void);

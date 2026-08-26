@@ -28,7 +28,8 @@ static float   s_duty   = 0;   /* 斜坡后的实际速度占空比 -100~+100 */
 static float   s_tilt_p = 0;   /* 当前俯仰倾斜 (mm, +低头) */
 static float   s_tilt_r = 0;   /* 当前侧倾倾斜 (mm, +右倾) */
 static uint8_t s_active = 0;   /* 驱动激活 (写电机) */
-static uint8_t s_no_tilt = 0;  /* V模式1: 无倾斜补偿驱动 (身体水平由自稳层保持) */
+static uint8_t s_no_tilt = 0;  /* 无倾斜补偿驱动 (V模式1/W/D模式1) */
+static uint8_t s_level_auto = 0; /* 自稳自动跟随 (V模式1/W): 无需L:1; D模式1不置位→跟L:1走 */
 
 /* 方向按键状态: 固定倾斜全程保持, 停止才回平 */
 static uint8_t s_btn_mode = 0;
@@ -70,7 +71,8 @@ void DriveCtrl_SetButton(uint8_t dir, int8_t spd)
     if (dir > 3) dir = 0;
     if (spd > 50) spd = 50;
     if (spd < 10) spd = 10;
-    s_no_tilt = 0;   /* D 按键有固定倾斜表 */
+    s_no_tilt = 0;         /* D 按键有固定倾斜表 */
+    s_level_auto = 0;      /* 经典模式不带自稳跟随 */
 
     /* 切换动作(换方向或从摇杆切来): 先回平再压新方向 */
     if (!s_btn_mode || s_btn_dir != dir)
@@ -90,6 +92,30 @@ void DriveCtrl_SetButton(uint8_t dir, int8_t spd)
     s_rpm_hist[0] = s_rpm_hist[1] = s_rpm_hist[2] = 0;
 }
 
+/* D模式1: 无倾斜补偿按键 (前进/后退基准速度, 转向 25±5 → 20/30 小差速)
+ * 自稳不自动开: 跟随全局 L:1 开关 */
+void DriveCtrl_SetButtonFlat(uint8_t dir, int8_t spd)
+{
+    if (dir > 3) dir = 0;
+    if (spd > 50) spd = 50;
+    if (spd < 10) spd = 10;
+    s_no_tilt = 1;         /* 无倾斜补偿 */
+    s_level_auto = 0;      /* 自稳跟 L:1 走, 不自动开 */
+    s_btn_mode = 0;        /* 不走固定倾斜表 */
+    s_flatten_pending = 0;
+    if (dir == 0) {                      /* 前进 30/30 */
+        s_cmd_sp = spd; s_cmd_st = 0;
+    } else if (dir == 1) {               /* 后退 */
+        s_cmd_sp = (int8_t)-spd; s_cmd_st = 0;
+    } else {                             /* 左转/右转: 左20/右30 或 左30/右20 */
+        s_cmd_sp = 25;
+        s_cmd_st = (dir == 2) ? -5 : 5;
+    }
+    s_active = 1;
+    s_plateau = 0;
+    s_rpm_hist[0] = s_rpm_hist[1] = s_rpm_hist[2] = 0;
+}
+
 void DriveCtrl_Reset(void)
 {
     s_cmd_sp = 0;
@@ -101,13 +127,16 @@ void DriveCtrl_Reset(void)
     s_plateau = 0;
     s_btn_mode = 0;
     s_no_tilt = 0;
+    s_level_auto = 0;
     s_flatten_pending = 0;
     for (int i = 0; i < 4; i++)
         Motor_Stop((uint8_t)i);
 }
 
-void DriveCtrl_SetNoTilt(uint8_t on) { s_no_tilt = on; }
-uint8_t DriveCtrl_NoTilt(void)      { return s_no_tilt; }
+void DriveCtrl_SetNoTilt(uint8_t on)   { s_no_tilt = on; }
+uint8_t DriveCtrl_NoTilt(void)         { return s_no_tilt; }
+void DriveCtrl_SetLevelAuto(uint8_t on){ s_level_auto = on; }
+uint8_t DriveCtrl_LevelAuto(void)      { return s_level_auto; }
 
 static float clampf2(float v, float lo, float hi)
 {

@@ -39,6 +39,9 @@ private slots:
     void onDisconnectClicked();
     void onReconnectClicked();   // 一键重连上次设备
 
+protected:
+    void resizeEvent(QResizeEvent *e) override;   // v6.24 窗口变化时重缩放遥控页视频 (防拉伸畸变)
+
 private:
     void setupUi();
     void appendLog(const QString &msg, const QString &color = QStringLiteral("#22c55e"));
@@ -78,16 +81,33 @@ private:
     void setDirState(const QString &dir, const QString &color = QString());
     void setGaitEnabled(bool on);
 
-    // 左侧竖栏导航 (5 页: 连接/矫正/运动/遥控/图传; 云台并入遥控页 v6.17)
+    // 左侧竖栏导航 (6 页: 连接/矫正/运动/遥控/按键/图传; v6.19 按键页=按键驾驶+单腿左右分栏)
     QStackedWidget *m_stack;
-    QPushButton *m_tabBtns[5];
-    CameraWidget *m_cameraWidget = nullptr;   // v6.12 第5页 WiFi 图传
+    QPushButton *m_tabBtns[6];
+    CameraWidget *m_cameraWidget = nullptr;   // v6.12 第6页 WiFi 图传
     void setPage(int idx);
+
+    // v6.19 按键驾驶页 (D 模式1): 自稳开关第二实例 (与连接页 m_btnLv 共享 m_lvOn 状态)
+    QPushButton *m_btnLv2 = nullptr;
+
+    // v6.22 按键页速度档 (U:1/U:0 步进5, 10~50; SPD 回显同步; 方向键显式带速度发)
+    int m_dpadSpd = 30;
+    QLabel *m_spdLabel = nullptr;
+    QTimer *m_spdRepeatTimer = nullptr;   // 加减速长按重复 (500ms)
+    int m_spdHoldDir = 0;                 // 1=按住加速 -1=按住减速
+
+    // v6.19 单腿抬腿页 (N:腿:动作): LG 回显状态显示
+    QLabel *m_legStateLabel = nullptr;
 
     // v6.18 W 越障抬腿重心补偿 (W:毫米, 0~40 默认15, 回显 WCOM:毫米)
     QSlider *m_wcomSlider = nullptr;
     QLabel *m_wcomVal = nullptr;
     int m_wcom = 15;   // 当前补偿值 (回显同步)
+
+    // v6.23 站姿宽度偏移 (Y:毫米, ±40 默认0, 回显 WID:毫米; 连接页滑块)
+    QSlider *m_widSlider = nullptr;
+    QLabel *m_widVal = nullptr;
+    int m_wid = 0;     // 当前偏移值 (回显同步)
 
     // v6.17 云台轮盘 (位于遥控页右栏: 单盘双轴拖动 5Hz 实时发送, 回显 GM:pan,tilt)
     QLabel *m_gimbalStateLabel = nullptr;   // 状态卡 (回显驱动, 在视频下方)

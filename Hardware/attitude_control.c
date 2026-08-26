@@ -6,14 +6,18 @@
  */
 #include "attitude_control.h"
 
-/* 站立自稳参数 (H/K 高站姿专用, 实测调好后写死) */
-#define LV_LPF     0.15f   /* 低通系数 (10Hz 调用 → 约0.6s时间常数) */
+/* 站立自稳参数 (H/K 高站姿专用, 实测调好后写死)
+ * 2026-08-26 精度升级: 死区1.0→0.5° / 低通0.6s→0.35s / 新增积分项消重心偏载残差 */
+#define LV_LPF     0.25f   /* 低通系数 (10Hz 调用 → 约0.35s时间常数; 原0.15≈0.6s偏慢) */
 #define LV_HALF_BL 190.0f  /* 前后髋距半长 mm (与 leg_ik.h BODY_BL=380 一致) */
 #define LV_HALF_BW 90.0f   /* 左右髋距半宽 mm (与 leg_ik.h BODY_BW=180 一致) */
 #define LV_Z_ROOM_BASE 304.6f  /* 伸腿上限基准: 直腿点足端z(309.6@x=15) − 5mm安全余量 */
-#define LV_DEAD     1.0f   /* 死区 (deg): ±1°内不响应 (实测反馈"太敏感", 软死区无阶跃) */
-#define LV_DEAD_FAST 0.5f  /* W原地抬腿快速模式死区: 减半, 翘板修正要快 */
-#define LV_LPF_FAST 0.50f  /* W快速低通 (50ms调用 → 约0.1s时间常数; 站立模式仍0.15@100ms) */
+#define LV_DEAD     0.7f   /* 死区 (deg): 1.0太粗/0.5偏敏感, 折中0.7 (软死区无阶跃) */
+#define LV_DEAD_FAST 0.5f  /* W原地抬腿快速模式死区: 翘板修正要快 */
+#define LV_LPF_FAST 0.50f  /* W快速低通 (50ms调用 → 约0.1s时间常数) */
+#define LV_KI       0.05f  /* 积分系数 (/tick): 消重心偏载常驻残差, 约2s收敛 */
+#define LV_I_MAX_P  3.0f   /* pitch积分抗饱和上限 (deg, ≈10mm) */
+#define LV_I_MAX_R  6.0f   /* roll积分抗饱和上限 (deg, ≈9mm) */
 
 #define POSE_NUM    5       /* 姿态槽位: H/K/L/M/P */
 #define CALIB_N     400     /* 400 × 5ms = 2 秒标定采样 */
@@ -34,6 +38,8 @@ static float    s_calib_rsum = 0;   /* roll 标定和 */
 static uint8_t  s_lv_en = 0;    /* L:命令开关 */
 static float    s_lp_p  = 0;    /* 低通后的相对零偏 pitch (deg, 前倾为正) */
 static float    s_lp_r  = 0;    /* 低通后的相对零偏 roll  (deg, 右倾为正) */
+static float    s_i_p   = 0;    /* pitch 积分 (deg, 消常驻残差) */
+static float    s_i_r   = 0;    /* roll 积分 (deg) */
 
 void AttCtrl_SetPose(uint8_t front_rev, uint8_t rear_rev, uint8_t high)
 {
@@ -84,6 +90,19 @@ uint8_t AttCtrl_LevelToggle(void)
 
 uint8_t AttCtrl_LevelEnabled(void) { return s_lv_en; }
 
+/* L:1/L:0 绝对值开关 (APP状态与固件同步用): 返回 0=开 1=关 2=未标定 */
+uint8_t AttCtrl_LevelSet(uint8_t on)
+{
+    if (on && !s_calib_done[s_pose]) return 2;   /* 当前姿态未标定, 先 Z */
+    if (on)  s_lv_en = 1;
+    else if (s_lv_en) {
+        s_lv_en = 0;
+        s_lp_p = 0.0f; s_lp_r = 0.0f;
+        s_i_p = 0.0f;  s_i_r  = 0.0f;
+    }
+    return s_lv_en ? 0u : 1u;
+}
+
 void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active,
                          uint8_t fast, float dz[4])
 {
@@ -91,6 +110,7 @@ void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active,
     /* 仅 active(主循环判定) + 已标定 + H/K高站姿 时输出 */
     if (!active || !s_calib_done[s_pose] || s_pose > 1) {
         s_lp_p = 0.0f; s_lp_r = 0.0f;   /* 不输出时清低通, 重新激活从0平滑爬升 */
+        s_i_p = 0.0f; s_i_r = 0.0f;     /* 积分同步清零 */
         return;
     }
     /* fast=W原地抬腿: 快速低通+减半死区 (对角支撑翘板修正要快) */
@@ -112,9 +132,21 @@ void AttCtrl_LevelUpdate(float pitch, float roll, float stand_h, uint8_t active,
     else if (dr < -dead) dr += dead;
     else                 dr = 0.0f;
 
-    /* 往哪边倾哪边腿伸长撑回水平: 前倾→前腿伸/后腿收; 右倾→右腿伸/左腿收 */
-    float pc = dp * 0.0174533f * LV_HALF_BL;
-    float rc = dr * 0.0174533f * LV_HALF_BW;
+    /* 积分项: 累积死区后残差, 消除重心偏载的常驻倾斜 (纯比例控制的稳态下垂)
+     * 仅正常模式; W快速档不加积分 (翘板动态快, 积分易发散) */
+    if (!fast) {
+        s_i_p += LV_KI * dp;
+        s_i_r += LV_KI * dr;
+        if (s_i_p >  LV_I_MAX_P) s_i_p =  LV_I_MAX_P;
+        if (s_i_p < -LV_I_MAX_P) s_i_p = -LV_I_MAX_P;
+        if (s_i_r >  LV_I_MAX_R) s_i_r =  LV_I_MAX_R;
+        if (s_i_r < -LV_I_MAX_R) s_i_r = -LV_I_MAX_R;
+    }
+
+    /* 往哪边倾哪边腿伸长撑回水平: 前倾→前腿伸/后腿收; 右倾→右腿伸/左腿收
+     * 输出 = 比例(死区后角度) + 积分(残差) */
+    float pc = (dp + s_i_p) * 0.0174533f * LV_HALF_BL;
+    float rc = (dr + s_i_r) * 0.0174533f * LV_HALF_BW;
     dz[0] =  pc - rc;    /* FL */
     dz[1] =  pc + rc;    /* FR */
     dz[2] = -pc - rc;    /* RL */

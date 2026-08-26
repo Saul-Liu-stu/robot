@@ -48,5 +48,5 @@ void SplashScreen::paintEvent(QPaintEvent *)
     p.setPen(QColor(QStringLiteral("#4b5563")));
     p.drawText(QRectF(0, height() * 0.90, width(), 26),
                Qt::AlignHCenter | Qt::AlignTop,
-               QStringLiteral("v6.17 · 正在初始化..."));
+               QStringLiteral("v6.24 · 正在初始化..."));
 }

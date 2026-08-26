@@ -28,6 +28,9 @@ void AttCtrl_SetPose(uint8_t front_rev, uint8_t rear_rev, uint8_t high);
 /* L:命令: 站立自稳开关。返回 0=已开 1=已关 2=当前姿态未标定(先Z) */
 uint8_t AttCtrl_LevelToggle(void);
 
+/* L:1/L:0 绝对值开关 (APP状态同步用): 1=强制开, 0=强制关。返回同 Toggle */
+uint8_t AttCtrl_LevelSet(uint8_t on);
+
 /* L:1 开关状态 (主循环拼 active 用; V模式1 无倾斜驱动时自稳自动跟随) */
 uint8_t AttCtrl_LevelEnabled(void);
 
