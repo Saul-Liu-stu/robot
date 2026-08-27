@@ -22,3 +22,14 @@ tools/facetest/*.txt
 # 系统文件
 Thumbs.db
 Desktop.ini
+
+# iCAN 文档: 工具与隐私/垃圾文件
+tools/fill_ican_template.py
+docs/~$*
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.tex
+docs/2026年大学生电子设计竞赛设计报告书*.docx
+docs/创新赛道——开发日志参考模板.docx
+docs/开发日志_提交版.docx
