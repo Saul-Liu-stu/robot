@@ -34,7 +34,8 @@ robot_four_leg/
 ├── Drivers/        # CMSIS + STM32H7xx HAL 库
 ├── QT_APP/         # Qt Android 蓝牙控制端 APP（UI/蓝牙传输/协议解析三层）
 ├── tools/          # Python 步态仿真与调参工具（IK 校验、行程余量、站起路径检查）
-├── docs/           # 工程文档（协议、功能总览、测试清单、硬件资料、iCAN 竞赛文档）
+├── 3D结构文件/     # 机身与腿部 3D 打印模型（STL/STEP）
+├── docs/           # 工程文档（协议、功能总览、测试清单、硬件资料、需求文档）
 └── robot_four_leg.ioc   # CubeMX 工程配置
 ```
 
@@ -44,5 +45,5 @@ robot_four_leg/
 - 功能总览：`docs/功能总览.md`
 - 功能测试清单：`docs/功能测试清单.md`
 - IMU 姿态自稳实现说明：`docs/IMU姿态控制方案.md`
-- 需求文档：`docs/需求文档.md` / `docs/需求文档.docx`
-- 开发日志：`docs/开发日志_模板版.docx` / `docs/开发日志_模板版.pdf`
+- 需求文档：`docs/需求文档.md`
+- 竞赛提交材料（开发日志、需求文档正式版等）：见材料包
