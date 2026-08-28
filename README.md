@@ -1,80 +1,48 @@
-# 四足机器人 robot_four_leg
+# 轮腿混合四足机器人 robot_four_leg
 
-基于 STM32H743 的四足机器人项目，包含固件、Qt 蓝牙控制端、Python 步态仿真工具与完整硬件文档。
+基于 STM32H743 的轮腿混合机器人项目：四足步态 + 轮式移动双运动模式，含 IMU 姿态自稳、主动越障（原地抬腿/台阶辅助）与云台视觉，配套 Qt Android 蓝牙控制端 APP 与完整工程文档。
 
 ## 硬件平台
 
 | 模块 | 型号 / 数量 | 接口 |
 |------|------------|------|
-| 主控 | STM32H743ZIT6 (LQFP144) @ 480MHz (HSI→PLL) | — |
+| 主控 | STM32H743ZIT6 (LQFP144) @ 480MHz | — |
 | 舵机 | 12× 270°（4 腿 × 外展/大腿/小腿） | TIM2/3/4/12 PWM 50Hz |
-| 直流电机 | 4× TB6612（腿部推进） | TIM1/16/17 PWM 10kHz |
-| 编码器 | 4× GMR 500PPR（1:28 减速） | EXTI 双沿计数 |
-| IMU | WT9011G4K | USART2 460800 |
-| 蓝牙 | HC-05（SPP） | USART3 115200 |
-| 摄像头 | OV5640（RGB565） | DCMI 8-bit + DMA |
-| 显示屏 | 1.54" ST7789V 240×240 | SPI6 |
+| 轮电机 | 4× MG513 + TB6612 驱动（腿末端驱动轮） | TIM1/16/17 PWM |
+| 编码器 | 4× GMR（与轮电机配套，轮速测量） | EXTI 双沿计数 |
+| IMU | WT9011G4K | USART2 |
+| 蓝牙 | HC-05（经典蓝牙 SPP） | USART3 |
+| 云台 | 2× 180° 舵机 + 图传模块 | PWM |
 
 完整引脚分配见 `docs/硬件/控制板引脚分配表.md`。
+
+## 核心功能
+
+- **轮腿双模**：平地轮式高效移动（最高约 1.7 m/s），崎岖地形对角步态（TROT）行走
+- **足端轨迹规划 + 3D IK**：步态机以足端位置为控制目标，三关节解析逆解驱动 12 路舵机
+- **姿态自稳**：IMU 反馈四腿 z 差动补偿，倾斜地面机身保持水平（Z 标定 + 开关控制）
+- **主动越障**：原地抬腿（W，对角支撑+重心补偿）、台阶辅助抬升（N，双腿直抬+轮滚协同）
+- **云台视觉**：二自由度云台 + 图传回传，APP 端颜色/运动检测
+- **在线调参**：ASCII 蓝牙协议全指令文档化，运动参数在线可调
 
 ## 项目结构
 
 ```
 robot_four_leg/
-├── Core/           # STM32 用户代码（步态、IK、电机、舵机、IMU、蓝牙、摄像头）
+├── Core/           # STM32 用户层（main、命令协议解析、模式状态机）
+├── Hardware/       # 行为/硬件层（步态 walk_gait、逆解 leg_ik、姿态控制 attitude_control、抬腿机动、轮式控制、云台、驱动）
 ├── Drivers/        # CMSIS + STM32H7xx HAL 库
-├── Hardware/       # 外设驱动（LCD、OV5640、SCCB）
-├── QT_APP/         # Qt 蓝牙控制端（Windows/Android）
-├── tools/          # Python 步态仿真与调参脚本
-├── docs/           # 项目文档
+├── QT_APP/         # Qt Android 蓝牙控制端 APP（UI/蓝牙传输/协议解析三层）
+├── tools/          # Python 步态仿真与调参工具（IK 校验、行程余量、站起路径检查）
+├── docs/           # 工程文档（协议、功能总览、测试清单、硬件资料、iCAN 竞赛文档）
 └── robot_four_leg.ioc   # CubeMX 工程配置
 ```
 
-## 软件环境
+## 文档
 
-| 部分 | 工具 | 说明 |
-|------|------|------|
-| 固件 | STM32CubeIDE | Import 工程后编译烧录 |
-| 控制端 | Qt 5.x + Android SDK | Qt Creator 打开 `QT_APP/robot_ble_app.pro` |
-| 仿真 | Python 3 | `tools/` 下脚本，依赖 numpy/matplotlib |
-
-## 快速开始
-
-1. **固件**：STM32CubeIDE → `File → Import → Existing Projects into Workspace` → 编译烧录
-2. **控制端**：Qt Creator 打开 `QT_APP/robot_ble_app.pro`；Android 构建产物生成于 `QT_APP/build_apk/`（不提交仓库）
-3. **步态仿真**：
-   ```bash
-   pip install numpy matplotlib
-   python tools/gait_sim.py
-   ```
-
-## 通信协议
-
-蓝牙 SPP（HC-05，115200 bps）v3.0：
-
-| 命令 | 功能 |
-|------|------|
-| `G` | 站立（12 舵机回到标准站姿） |
-| `T` | Trot 对角小跑 |
-| `A` | 单步前进（调试用，按相位推进 90°） |
-| `1`~`12` | 舵机校准模式 |
-
-完整协议见 `docs/协议/蓝牙通信协议.md`。
-
-## 文档索引
-
-| 目录 | 内容 |
-|------|------|
-| `docs/CubeMX/` | CubeMX 配置指南与生成后修复清单 |
-| `docs/协议/` | 蓝牙通信协议 |
-| `docs/硬件/` | 引脚分配、舵机标定、移植文档 |
-| `docs/算法/` | 步态实现、IK、PID 调试 |
-| `docs/协作开发指南.md` | **协作开发规范（Fork + PR 工作流），开工前必读** |
-
-## 协作开发
-
-本项目采用一人一仓库（Fork + Pull Request）模式，具体流程见 `docs/协作开发指南.md`。
-
-- 开发前先同步主仓库，禁止直接 push 主仓库
-- 提交信息格式：`类型: 描述`（feat/fix/docs/refactor/test）
-- 编译产物（`Debug/`、`build_apk/`、APK 等）已被 `.gitignore` 排除，不要提交
+- 蓝牙通信协议：`docs/协议/蓝牙通信协议.md`
+- 功能总览：`docs/功能总览.md`
+- 功能测试清单：`docs/功能测试清单.md`
+- IMU 姿态自稳实现说明：`docs/IMU姿态控制方案.md`
+- 需求文档：`docs/需求文档.md` / `docs/需求文档.docx`
+- 开发日志：`docs/开发日志_模板版.docx` / `docs/开发日志_模板版.pdf`
